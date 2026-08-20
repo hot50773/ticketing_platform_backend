@@ -69,7 +69,7 @@ class SeatService:
                     cart = Cart(
                         user_id=user_id,
                         event_id=event_id,
-                        expired_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+                        expired_at=(datetime.now(timezone.utc) + timedelta(minutes=15)).replace(tzinfo=None)
                     )
                     session.add(cart)
                     await session.flush()  # Populates cart.id
