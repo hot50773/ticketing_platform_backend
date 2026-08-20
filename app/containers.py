@@ -2,7 +2,7 @@ from dependency_injector import containers, providers
 from app.config import settings
 from app.db.postgres import Database
 from app.db.redis import RedisClient
-from app.cache.nickname import SeatLockCache
+from app.cache.seat import SeatLockCache
 from app.repositories.seat import SeatRepository
 from app.services.seat import SeatService
 

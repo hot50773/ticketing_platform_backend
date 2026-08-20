@@ -23,7 +23,5 @@ class Database:
         await session.close()
 
     async def close_all_sessions(self):
-        """Closes all database sessions."""
-        async with self.async_session_maker() as session:
-            await session.close_all()
-            await self._engine.dispose()
+        """Closes all database sessions and disposes the engine."""
+        await self._engine.dispose()
