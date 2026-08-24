@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, timedelta
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import UniqueConstraint, DateTime
 from sqlmodel import SQLModel, Field
 
 from ._shared import TableBase, SoftDeletable
@@ -43,7 +43,10 @@ class Event(TableBase, SoftDeletable, table=True):
     __tablename__ = "event"
     name: str = Field(max_length=100)
     description: str = Field(default="")
-    start_at: datetime = Field(sa_column_kwargs={"comment": "活動開始時間"})
+    start_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={"comment": "活動開始時間"}
+    )
     end_at: str = Field(sa_column_kwargs={"comment": "活動結束時間"})
     venue_id: int = Field(foreign_key="venue.id")
 
@@ -73,8 +76,9 @@ class Cart(TableBase, SoftDeletable, table=True):
     user_id: int = Field(foreign_key="user.id")
     event_id: int = Field(foreign_key="event.id")
     expired_at: datetime = Field(
-        default_factory=lambda: (datetime.now(timezone.utc) + timedelta(minutes=10)).replace(tzinfo=None),
-        sa_column_kwargs={"comment": "購物車過期時間"}
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={"comment": "購物車過期時間"},
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(minutes=10)
     )
 
 class CartTicket(TableBase, table=True):
