@@ -71,29 +71,14 @@ class EventSeat(TableBase, SoftDeletable, table=True):
 
     __table_args__ = ({"comment": "活動的座位表（包含座位的預訂狀態）"},)
 
-class Cart(TableBase, SoftDeletable, table=True):
-    __tablename__ = "cart"
-    user_id: int = Field(foreign_key="user.id")
-    event_id: int = Field(foreign_key="event.id")
-    expired_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"comment": "購物車過期時間"},
-        default_factory=lambda: datetime.now(timezone.utc) + timedelta(minutes=10)
-    )
-
-class CartTicket(TableBase, table=True):
-    __tablename__ = "cart_ticket"
-    cart_id: int = Field(foreign_key="cart.id")
-    event_seat_id: int = Field(foreign_key="event_seat.id")
-
-class Order(TableBase, table=True):
+class Order(TableBase, SoftDeletable, table=True):
     __tablename__ = "order"
     user_id: int = Field(foreign_key="user.id")
     event_id: int = Field(foreign_key="event.id")
     status: str = Field(default="PENDING", description="訂單完成狀態") # 訂單未完成、訂單已完成、訂單已取消
     payment_status: str = Field(default="PENDING", description="付款狀態") # 主流成的付款狀態：付款失敗、付款成功、待付款
     checkout_amount: int = Field(default=0, description="結帳金額", sa_column_kwargs={"comment": "結帳金額"})
-    comment: str | None = Field(description="訂單備註")
+    comment: str | None = Field(default=None, description="訂單備註")
 
 class OrderTicket(TableBase, table=True):
     __tablename__ = "order_ticket"
