@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.containers import Container
-from app.routers.seat import router as events_router
+from app.routers.event import router as events_router
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):

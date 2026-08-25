@@ -3,8 +3,8 @@ from app.config import settings
 from app.db.postgres import Database
 from app.db.redis import RedisClient
 from app.cache.seat import SeatLockCache
-from app.repositories.seat import SeatRepository
-from app.services.seat import SeatService
+from app.repositories.event import EventRepository
+from app.services.event import EventService
 
 class Container(containers.DeclarativeContainer):
     """Dependency Injection Container managing project lifecycles and instances."""
@@ -12,7 +12,7 @@ class Container(containers.DeclarativeContainer):
     # Configure wiring modules for auto-inject dependencies injection
     wiring_config = containers.WiringConfiguration(
         modules=[
-            "app.routers.seat",
+            "app.routers.event",
             "app.main"
         ]
     )
@@ -27,19 +27,19 @@ class Container(containers.DeclarativeContainer):
     redis_client = providers.Singleton(RedisClient)
 
     # Cache Clients
-    seat_lock_cache = providers.Factory(
+    event_lock_cache = providers.Factory(
         SeatLockCache,
         redis_client=redis_client
     )
 
     # Repositories
-    seat_repository = providers.Factory(
-        SeatRepository,
+    event_repository = providers.Factory(
+        EventRepository,
         session_factory=async_session_factory
     )
 
-    seat_service = providers.Factory(
-        SeatService,
-        seat_repository=seat_repository,
-        seat_lock_cache=seat_lock_cache
+    event_service = providers.Factory(
+        EventService,
+        event_repository=event_repository,
+        event_lock_cache=event_lock_cache
     )
