@@ -1,12 +1,11 @@
 import redis.asyncio as aioredis
 from app.config import settings
 
-_client = aioredis.from_url(settings.redis_url, decode_responses=True)
-
 class RedisClient:
     """Class-based Redis client wrapper implementing the Singleton pattern."""
     def __init__(self):
-        self._client = _client
+        self._client = aioredis.from_url(settings.redis_url, decode_responses=True)
+
 
 
     def __getattr__(self, name: str):

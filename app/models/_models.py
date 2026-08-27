@@ -79,6 +79,13 @@ class Order(TableBase, SoftDeletable, table=True):
     payment_status: str = Field(default="PENDING", description="付款狀態") # 主流成的付款狀態：付款失敗、付款成功、待付款
     checkout_amount: int = Field(default=0, description="結帳金額", sa_column_kwargs={"comment": "結帳金額"})
     comment: str | None = Field(default=None, description="訂單備註")
+    payment_deadline: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        index=True,
+        sa_column_kwargs={"comment": "付款截止期限"}
+    )
+
 
 class OrderTicket(TableBase, table=True):
     __tablename__ = "order_ticket"

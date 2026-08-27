@@ -2,16 +2,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.config import settings
 
-# One engine instance shared across all database sessions
-_engine = create_async_engine(settings.database_url, echo=True)
-
-
 class Database:
     """Database connection wrapper exposing the engine and session maker."""
 
     def __init__(self):
-        self._engine = _engine
+        self._engine = create_async_engine(settings.database_url, echo=True)
         self.async_session_maker = async_sessionmaker(self._engine, expire_on_commit=False)
+
 
     def get_async_session(self):
         """Returns a new database session."""

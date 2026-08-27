@@ -15,14 +15,22 @@
   2. 開始任何實作前，**必須先與使用者討論並擬定介面定義 (Interface)**。
   3. 雙方達成共識後，方可開始撰寫實作。
 * **TDD 測試驅動開發**：必須使用 `pytest` 撰寫簡潔好維護的測試，且 Test cases 與驗證條件 (Acceptance Criteria) 需與使用者討論並審核。
-* **Code Review 與 Commit**：每個子任務實作完成後，先執行 Code Review 確保無誤，再進行 atomic commit。Commit 訊息需遵循意圖導向與格式規範。
+* **Code Review 與 Commit**：每個子任務實作完成後，在進行 atomic commit 前，必須依序執行以下 Clean Code 審查：
+  1. **測試驗證**：必須執行 `pdm run test` 並確保 100% 綠燈通過。
+  2. **消除 Magic Values**：檢查是否包含魔術數字或硬編碼字串，必要時抽離至 Enum 或常數。
+  3. **頂部導入 (Imports Check)**：嚴禁使用 inline imports，且所有 import 必須置於檔案頂端；移除任何未使用的 DB 語句或 Model 導入（如 sqlmodel.select）。
+  4. **命名規範與業務語意**：檢查布林值、變數與時間戳命名是否具備動作或明確業務語意（如使用 `payment_deadline` 代替 `expired_at`）。
+  5. Commit 訊息需遵循意圖導向與格式規範。
+
 * **AI 文件存放規範**：所有過程中產生的規劃、學習與任務文件，必須存放在專案根目錄的 `ai/` 資料夾（如 `ai/plans/`），嚴禁存放在專案外或 `docs/` 中。
+* **第三方套件評估與討論**：在實作任何新功能模組前，必須先評估是否有現成、常用且成熟的第三方套件可以導入（例如 Cronjob 模組，可考慮 `APScheduler` 等），並與使用者進行討論，以避免重複造輪子。
+
 
 ## 3. 程式設計與架構規範 (Coding & Architecture Standards)
 * **經典三層架構**：
   * **API 層 (`app/routers/`)**：FastAPI 對外接口，需嚴格定義 API Schema。
   * **Service 層 (`app/services/`)**：撰寫所有的**核心商業邏輯**。
-    * *禁忌*：Service 層不得直接存取 PostgreSQL (DB) 或 Redis，亦不能直接調用外部 API。
+    * *禁忌*：Service 層不得直接存取 PostgreSQL (DB) 或 Redis，亦不能直接調用外部 API。**Service 層級不可執行任何資料庫查詢、寫入、或事務操作（例如不得開啟、使用或接收 session，亦不得直接引用 session_factory）**。
     * *職責分離*：如有多個面向的業務（例如：欄位驗證、票價計算），需拆分成獨立的類別 (Class)，並以 DI (Dependency Injection) 的方式注入 Service。
   * **Repository 層**：
     * 資料庫操作：`app/repositories/`，所有牽涉 DB 的讀寫，每個操作都必須在 Transaction Session 中進行。
@@ -30,3 +38,5 @@
 * **模組劃分**：採用領域驅動設計 (DDD) 的概念進行模組拆分。
 * **資料傳輸規範**：不同物件或服務間進行資料傳輸時，**必須使用 SQLModel、Pydantic Model、RedisOM 等結構化資料 Schema**，嚴禁使用無結構的 `dict` 或 `tuple`。
 * **SOLID 原則**：嚴格遵守 SOLID（特別是 Single Responsibility Principle 單一職責原則），代碼本身必須清晰展現其設計意圖，並附上高質量的 English 註釋。
+
+* **排程與手動任務 (`app/jobs/`)**：所有排程 Cronjobs 與手動執行的維護任務必須統一放置於 `app/jobs/` 資料夾中（如 `app/jobs/**.py`），以便集中管理與執行背景排程或手動維護任務。

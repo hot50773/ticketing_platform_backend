@@ -4,6 +4,7 @@ from app.db.postgres import Database
 from app.db.redis import RedisClient
 from app.cache.seat import SeatLockCache
 from app.repositories.event import EventRepository
+from app.repositories.order import OrderRepository
 from app.services.event import EventService
 
 class Container(containers.DeclarativeContainer):
@@ -38,8 +39,15 @@ class Container(containers.DeclarativeContainer):
         session_factory=async_session_factory
     )
 
+    order_repository = providers.Factory(
+        OrderRepository,
+        session_factory=async_session_factory
+    )
+
     event_service = providers.Factory(
         EventService,
         event_repository=event_repository,
+        order_repository=order_repository,
         event_lock_cache=event_lock_cache
     )
+

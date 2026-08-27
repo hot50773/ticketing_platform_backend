@@ -228,3 +228,7 @@ __marimo__/
 # Environment Variables (Secrets)
 .env.*
 !.env.example
+
+# Scratch files
+scratch/
+

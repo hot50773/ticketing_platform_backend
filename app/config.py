@@ -10,5 +10,9 @@ class Settings(BaseSettings):
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_url: str = "redis://localhost:6379/0"
+    
+    enable_cron_jobs: bool = True
 
 settings = Settings()
+
+
