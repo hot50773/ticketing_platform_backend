@@ -5,7 +5,9 @@ from app.db.redis import RedisClient
 from app.cache.seat import SeatLockCache
 from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
+from app.repositories.venue import VenueRepository
 from app.services.event import EventService
+from app.services.venue import VenueService
 
 class Container(containers.DeclarativeContainer):
     """Dependency Injection Container managing project lifecycles and instances."""
@@ -14,6 +16,7 @@ class Container(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration(
         modules=[
             "app.routers.event",
+            "app.routers.venue",
             "app.main"
         ]
     )
@@ -44,10 +47,21 @@ class Container(containers.DeclarativeContainer):
         session_factory=async_session_factory
     )
 
+    venue_repository = providers.Factory(
+        VenueRepository,
+        session_factory=async_session_factory
+    )
+
+    venue_service = providers.Factory(
+        VenueService,
+        venue_repository=venue_repository
+    )
+
     event_service = providers.Factory(
         EventService,
         event_repository=event_repository,
         order_repository=order_repository,
         event_lock_cache=event_lock_cache
     )
+
 

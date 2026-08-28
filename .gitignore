@@ -223,7 +223,7 @@ __marimo__/
 # AI / Antigravity CLI / Gemini config and workspace cache
 /ai
 /archive
-/task.md
+#/task.md
 
 # Environment Variables (Secrets)
 .env.*
