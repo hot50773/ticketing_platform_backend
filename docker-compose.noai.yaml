@@ -1,0 +1,43 @@
+# Isolated infrastructure dedicated to Claude Code sessions.
+# Deliberately separated from docker-compose.yaml so that refactoring work and
+# destructive test fixtures (TRUNCATE ... CASCADE) never touch the developer's
+# local data. Distinct container names, ports and named volumes guarantee that
+# both stacks can run side by side.
+name: ticketing-claude
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: noai_postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ticketing_noai_db}
+    ports:
+      - "55432:5432"
+    volumes:
+      - noai_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: noai_redis_cache
+    restart: unless-stopped
+    ports:
+      - "56379:6379"
+    volumes:
+      - noai_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  noai_postgres_data:
+  noai_redis_data:
