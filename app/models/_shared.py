@@ -1,20 +1,21 @@
-from datetime import datetime, timezone
+from datetime import datetime
+
+from sqlalchemy import DateTime, func, Column
 from sqlmodel import SQLModel, Field
-from sqlalchemy import DateTime
+
 
 class TableBase(SQLModel):
-    id: int = Field(primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     created_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc)
+        sa_column=Column(DateTime(timezone=True),
+            server_default=func.now()
+        ),
     )
     updated_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc)
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
 
 class SoftDeletable(SQLModel):
     deleted_at: datetime | None = Field(
-        sa_type=DateTime(timezone=True),
-        default=None
+        sa_column=Column(DateTime(timezone=True)),
     )

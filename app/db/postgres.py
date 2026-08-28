@@ -1,4 +1,4 @@
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.config import settings
 
@@ -7,10 +7,9 @@ class Database:
 
     def __init__(self):
         self._engine = create_async_engine(settings.database_url, echo=True)
-        self.async_session_maker = async_sessionmaker(self._engine, expire_on_commit=False)
+        self.async_session_maker = async_sessionmaker(self._engine)
 
-
-    def get_async_session(self):
+    def get_async_session(self) -> AsyncSession:
         """Returns a new database session."""
         return self.async_session_maker()
 

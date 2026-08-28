@@ -11,3 +11,9 @@ class EntityConflictError(Exception):
 class ActiveEventsExistError(Exception):
     """Raised when attempting to delete a venue that has active events linked to it."""
     pass
+
+
+# Messages
+VENUE_NOT_FOUND_MSG = "Venue with id {venue_id} not found"
+ZONE_NOT_FOUND_MSG = "Zone with id {zone_id} not found"
+SEAT_NOT_FOUND_MSG = "Seat with id {seat_id} not found"

@@ -1,9 +1,12 @@
-from datetime import datetime, timezone, timedelta
-from sqlalchemy import UniqueConstraint, DateTime
-from sqlmodel import SQLModel, Field
+from datetime import datetime
+from tokenize import String
 
-from ._shared import TableBase, SoftDeletable
+from sqlalchemy import UniqueConstraint, DateTime, Column, Integer
+from sqlmodel import Field
+
 from app.enums import SeatStatus
+from ._shared import TableBase, SoftDeletable
+
 
 class User(TableBase, table=True):
     __tablename__ = "user"
@@ -42,12 +45,11 @@ class Seat(TableBase, SoftDeletable, table=True):
 class Event(TableBase, SoftDeletable, table=True):
     __tablename__ = "event"
     name: str = Field(max_length=100)
-    description: str = Field(default="")
+    description: str | None = Field()
     start_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"comment": "活動開始時間"}
+        sa_column=Column(DateTime(timezone=True), comment="活動開始時間"),
     )
-    end_at: str = Field(sa_column_kwargs={"comment": "活動結束時間"})
+    end_at: str = Field(sa_column=Column(String, comment= "活動結束時間"))
     venue_id: int = Field(foreign_key="venue.id")
 
     __table_args__ = ({"comment": "活動，例如：演唱會、研討會"},)
@@ -56,7 +58,7 @@ class EventZone(TableBase, SoftDeletable, table=True):
     __tablename__ = "event_zone"
     event_id: int = Field(foreign_key="event.id")
     zone_id: int = Field(foreign_key="zone.id")
-    price: int = Field(default=0, sa_column_kwargs={"comment": "該分區的票價"})
+    price: int = Field(default=0, sa_column=Column(Integer, comment="該分區的票價"))
 
     __table_args__ = (
         UniqueConstraint("event_id", "zone_id", name="uq_event_zone"),
@@ -77,13 +79,11 @@ class Order(TableBase, SoftDeletable, table=True):
     event_id: int = Field(foreign_key="event.id")
     status: str = Field(default="PENDING", description="訂單完成狀態") # 訂單未完成、訂單已完成、訂單已取消
     payment_status: str = Field(default="PENDING", description="付款狀態") # 主流成的付款狀態：付款失敗、付款成功、待付款
-    checkout_amount: int = Field(default=0, description="結帳金額", sa_column_kwargs={"comment": "結帳金額"})
-    comment: str | None = Field(default=None, description="訂單備註")
+    checkout_amount: int = Field(default=0, description="結帳金額", sa_column=Column(Integer, comment="結帳金額"))
+    comment: str | None = Field(default=None, description="訂單備註", sa_column=Column(Integer, comment="訂單備註"))
     payment_deadline: datetime | None = Field(
         default=None,
-        sa_type=DateTime(timezone=True),
-        index=True,
-        sa_column_kwargs={"comment": "付款截止期限"}
+        sa_column=Column(DateTime(timezone=True), comment="付款截止期限"),
     )
 
 

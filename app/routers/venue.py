@@ -104,7 +104,7 @@ async def get_zone(
 ):
     """Gets details of an active zone by its ID."""
     try:
-        return await venue_service.get_zone(zone_id)
+        return await venue_service.get_and_check_zone(zone_id)
     except EntityNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
