@@ -19,9 +19,6 @@ def start_scheduler(container: Container) -> AsyncIOScheduler | None:
     logger.info("Initializing APScheduler...")
     scheduler = AsyncIOScheduler()
     
-    # Wire the container to job modules so injection decorators resolve correctly
-    container.wire(modules=["app.jobs.order_cleanup"])
-    
     for job_class in REGISTERED_JOB_CLASSES:
         try:
             job_instance = job_class()
