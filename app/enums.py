@@ -1,12 +1,17 @@
 import enum
 
 class SeatStatus(enum.Enum):
-    LOCK = "LOCK" # 暫時鎖定
-    RELEASED = "RELEASED"
+    """
+    AVAILABLE -> LOCKED -> RESERVED
+    LOCKED -> AVAILABLE
+    RESERVED -> AVAILABLE
+    """
+    AVAILABLE = "AVAILABLE" # 可預訂
+    LOCKED = "LOCKED" # 暫時鎖定
     RESERVED = "RESERVED" # 已預訂
 
 class RedisSeatStatus(int, enum.Enum):
-    RELEASED = 0
+    AVAILABLE = 0
     LOCKED = 1
     RESERVED = 2
 
