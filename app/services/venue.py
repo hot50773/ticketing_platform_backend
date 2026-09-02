@@ -1,5 +1,5 @@
 from app.models import Venue, Zone, Seat
-from app.schemas import VenueCreate, ZoneCreate, SeatCreate
+from app.schemas.venue import VenueCreate, ZoneBase, SeatBatchCreate
 from app.repositories.venue import VenueRepository
 from app.exceptions import EntityNotFoundError, VENUE_NOT_FOUND_MSG, SEAT_NOT_FOUND_MSG
 
@@ -24,7 +24,7 @@ class VenueService:
     async def delete_venue(self, venue_id: int) -> None:
         await self._repository.delete_venue_cascade(venue_id)
 
-    async def create_zone(self, venue_id: int, zone_data: ZoneCreate) -> Zone:
+    async def create_zone(self, venue_id: int, zone_data: ZoneBase) -> Zone:
         return await self._repository.create_zone(venue_id, zone_data)
 
     async def list_zones_by_venue(self, venue_id: int) -> list[Zone]:
@@ -33,11 +33,11 @@ class VenueService:
     async def get_and_check_zone(self, zone_id: int) -> Zone:
         return await self._repository.get_and_check_zone(zone_id)
 
-    async def create_seat(self, zone_id: int, seat_data: SeatCreate) -> Seat:
+    async def create_seat(self, zone_id: int, seat_data: SeatBatchCreate) -> Seat:
         await self.get_and_check_zone(zone_id)
         return await self._repository.create_seat(zone_id, seat_data)
 
-    async def batch_create_seats(self, zone_id: int, seats_data: list[SeatCreate]) -> None:
+    async def batch_create_seats(self, zone_id: int, seats_data: list[SeatBatchCreate]) -> None:
         if seats_data:
             await self.get_and_check_zone(zone_id)
             await self._repository.create_seats_batch(zone_id, seats_data)

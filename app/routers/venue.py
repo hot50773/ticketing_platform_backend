@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from dependency_injector.wiring import inject, Provide
 from app.containers import Container
 from app.services.venue import VenueService
-from app.schemas import (
+from app.schemas.venue import (
     VenueCreate,
     VenueResponse,
-    ZoneCreate,
+    ZoneBase,
     ZoneResponse,
-    SeatCreate,
+    SeatBatchCreate,
     SeatResponse,
     SeatBatchCreate,
 )
@@ -71,7 +71,7 @@ async def delete_venue(
 @inject
 async def create_zone(
     venue_id: int,
-    zone_data: ZoneCreate,
+    zone_data: ZoneBase,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a new zone under a venue."""
@@ -113,7 +113,7 @@ async def get_zone(
 @inject
 async def create_seat(
     zone_id: int,
-    seat_data: SeatCreate,
+    seat_data: SeatBatchCreate,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a single seat under a zone."""

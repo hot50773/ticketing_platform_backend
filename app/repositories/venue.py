@@ -13,7 +13,7 @@ from app.exceptions import (
     SEAT_NOT_FOUND_MSG,
 )
 from app.models import Venue, Zone, Seat, Event
-from app.schemas import VenueCreate, ZoneCreate, SeatCreate
+from app.schemas.venue import VenueCreate, ZoneBase, SeatBatchCreate
 from app.libs.clock.functional import now_utc
 
 
@@ -117,7 +117,7 @@ class VenueRepository:
         zone_ids = [z.id for z in zones]
         return zone_ids
 
-    async def create_zone(self, venue_id: int, zone_data: ZoneCreate) -> Zone:
+    async def create_zone(self, venue_id: int, zone_data: ZoneBase) -> Zone:
         async with self.session_factory() as session:
             # Ensure the parent venue exists and is not soft-deleted
             venue = await self._get_and_check_venue(session, venue_id)
@@ -177,7 +177,7 @@ class VenueRepository:
             raise EntityNotFoundError(ZONE_NOT_FOUND_MSG.format(zone_id=zone_id))
         return zone
 
-    async def create_seat(self, zone_id: int, seat_data: SeatCreate) -> Seat:
+    async def create_seat(self, zone_id: int, seat_data: SeatBatchCreate) -> Seat:
         async with self.session_factory() as session:
             seat = Seat(
                 serial_number=seat_data.serial_number,
@@ -197,7 +197,7 @@ class VenueRepository:
                 ) from exc
 
     async def create_seats_batch(
-        self, zone_id: int, seats_data: list[SeatCreate]
+        self, zone_id: int, seats_data: list[SeatBatchCreate]
     ) -> None:
         async with self.session_factory() as session:
             # Validate for internal duplicate serial numbers within the batch request
