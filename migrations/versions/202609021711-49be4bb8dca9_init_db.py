@@ -46,7 +46,6 @@ def upgrade() -> None:
         sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("address", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("name"),
         comment="場地",
     )
     op.create_table(
@@ -88,7 +87,6 @@ def upgrade() -> None:
             ["venue.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("venue_id", "name", name="uq_zone_venue"),
         comment="區域",
     )
     op.create_table(
@@ -99,7 +97,12 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("event_id", sa.Integer(), nullable=False),
         sa.Column("name", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column("price", sa.Integer(), nullable=False, comment="該分區的票價"),
+        sa.Column(
+            "price",
+            sa.Integer(),
+            nullable=True,
+            comment="該分區的票價；NULL 表示尚未設定，活動不可上架",
+        ),
         sa.Column(
             "source_zone_id",
             sa.Integer(),
@@ -111,7 +114,6 @@ def upgrade() -> None:
             ["event.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("event_id", "name", name="uq_event_zone"),
         comment=" 活動場地的座位分區",
     )
     op.create_table(
@@ -174,7 +176,6 @@ def upgrade() -> None:
             ["zone.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("serial_number", "zone_id", name="uq_seat_zone"),
         comment="座位",
     )
     op.create_table(
@@ -199,7 +200,6 @@ def upgrade() -> None:
             ["event_zone.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("event_zone_id", "serial_number", name="uq_event_seat"),
         comment="活動的座位表",
     )
     op.create_table(
@@ -220,6 +220,21 @@ def upgrade() -> None:
             ["order.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
+        comment="活動門票",
+    )
+
+    # Uniqueness on soft-deletable tables is enforced by partial indexes so a
+    # soft-deleted row stops occupying its name / serial number.
+    active = sa.text("deleted_at IS NULL")
+    op.create_index("uq_venue_name", "venue", ["name"], unique=True, postgresql_where=active)
+    op.create_index("uq_zone_venue", "zone", ["venue_id", "name"], unique=True, postgresql_where=active)
+    op.create_index("uq_seat_zone", "seat", ["zone_id", "serial_number"], unique=True, postgresql_where=active)
+    op.create_index("uq_event_zone", "event_zone", ["event_id", "name"], unique=True, postgresql_where=active)
+    op.create_index(
+        "uq_event_seat", "event_seat", ["event_zone_id", "serial_number"], unique=True, postgresql_where=active
+    )
+    op.create_index(
+        "uq_order_ticket", "order_ticket", ["order_id", "event_seat_id"], unique=True, postgresql_where=active
     )
 
 

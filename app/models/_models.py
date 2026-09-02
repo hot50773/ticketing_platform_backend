@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import UniqueConstraint, DateTime
+from sqlalchemy import DateTime, Index, text
 from sqlmodel import Field
 
 from app.enums import SeatStatus, OrderStatus, PaymentStatus
@@ -13,13 +13,23 @@ class User(TableBase, table=True):
     email: str = Field(unique=True)
     hashed_password: str
 
+# Soft-deletable tables use partial unique indexes (WHERE deleted_at IS NULL)
+# rather than UNIQUE constraints: a plain constraint would let a soft-deleted
+# row keep occupying its name / serial number forever, and would block the
+# EventSeat renumbering that Redis offsets depend on.
+SOFT_DELETE_ACTIVE = text("deleted_at IS NULL")
+
+
 class Venue(SoftDeletable, TableBase, table=True):
     __tablename__ = "venue"
-    name: str = Field(unique=True)
+    name: str
     description: str
     address: str
 
-    __table_args__ = ({"comment": "場地"},)
+    __table_args__ = (
+        Index("uq_venue_name", "name", unique=True, postgresql_where=SOFT_DELETE_ACTIVE),
+        {"comment": "場地"},
+    )
 
 class Zone(SoftDeletable, TableBase, table=True):
     __tablename__ = "zone"
@@ -27,7 +37,7 @@ class Zone(SoftDeletable, TableBase, table=True):
     venue_id: int = Field(foreign_key="venue.id")
 
     __table_args__ = (
-        UniqueConstraint("venue_id", "name", name="uq_zone_venue"),
+        Index("uq_zone_venue", "venue_id", "name", unique=True, postgresql_where=SOFT_DELETE_ACTIVE),
         {"comment": "區域"},
     )
 
@@ -38,8 +48,9 @@ class Seat(SoftDeletable, TableBase, table=True):
     col: int
     zone_id: int = Field(foreign_key="zone.id")
 
+    # (zone_id, serial_number) rather than the reverse: zone_id is the useful prefix
     __table_args__ = (
-        UniqueConstraint("serial_number", "zone_id", name="uq_seat_zone"),
+        Index("uq_seat_zone", "zone_id", "serial_number", unique=True, postgresql_where=SOFT_DELETE_ACTIVE),
         {"comment": "座位"},
     )
 
@@ -72,11 +83,14 @@ class EventZone(SoftDeletable, TableBase, table=True):
     __tablename__ = "event_zone"
     event_id: int = Field(foreign_key="event.id")
     name: str
-    price: int = Field(sa_column_kwargs={"comment":"該分區的票價"})
+    price: int | None = Field(
+        default=None,
+        sa_column_kwargs={"comment": "該分區的票價；NULL 表示尚未設定，活動不可上架"},
+    )
     source_zone_id: int | None = Field(sa_column_kwargs={"comment":"後端用；記錄原始參考的 zone_id"})
 
     __table_args__ = (
-        UniqueConstraint("event_id", "name", name="uq_event_zone"),
+        Index("uq_event_zone", "event_id", "name", unique=True, postgresql_where=SOFT_DELETE_ACTIVE),
         {"comment": " 活動場地的座位分區"},
     )
 
@@ -89,7 +103,16 @@ class EventSeat(SoftDeletable, TableBase, table=True):
     status: SeatStatus = Field(default=SeatStatus.AVAILABLE)
     source_seat_id: int | None = Field(sa_column_kwargs={"comment":"後端用；記錄原始參考的 seat_id"})
 
-    __table_args__ = (UniqueConstraint("event_zone_id", "serial_number", name="uq_event_seat"), {"comment": "活動的座位表"}, )
+    __table_args__ = (
+        Index(
+            "uq_event_seat",
+            "event_zone_id",
+            "serial_number",
+            unique=True,
+            postgresql_where=SOFT_DELETE_ACTIVE,
+        ),
+        {"comment": "活動的座位表"},
+    )
 
 class Order(SoftDeletable, TableBase, table=True):
     __tablename__ = "order"
@@ -111,4 +134,16 @@ class OrderTicket(SoftDeletable, TableBase, table=True):
     event_seat_id: int = Field(foreign_key="event_seat.id")
     amount: int = Field(sa_column_kwargs={"comment":"票價"})
 
-    _table_args_ = (UniqueConstraint("order_id", "event_seat_id", name="uq_order_ticket"), {"comment": "活動門票"})
+    # Partial index, not a constraint: a soft-deleted ticket must stop
+    # occupying its seat so the same seat can be re-added to the same order
+    # after being released.
+    __table_args__ = (
+        Index(
+            "uq_order_ticket",
+            "order_id",
+            "event_seat_id",
+            unique=True,
+            postgresql_where=SOFT_DELETE_ACTIVE,
+        ),
+        {"comment": "活動門票"},
+    )

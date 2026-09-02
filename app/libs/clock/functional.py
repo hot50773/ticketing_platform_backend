@@ -1,4 +1,9 @@
 from datetime import datetime, timezone
 
+
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """Current time as a timezone-aware UTC datetime.
+
+    All datetimes in the system are aware UTC; the DB columns are timestamptz.
+    """
+    return datetime.now(timezone.utc)
