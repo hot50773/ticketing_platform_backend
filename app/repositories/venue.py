@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
@@ -13,7 +14,9 @@ from app.exceptions import (
     SEAT_NOT_FOUND_MSG,
 )
 from app.models import Venue, Zone, Seat, Event
-from app.schemas.venue import VenueCreate, ZoneBase, SeatBatchCreate
+from app.repositories._pagination import paginate
+from app.schemas import Page, PaginationParams
+from app.schemas.venue import VenueCreate, ZoneBase, SeatCreate
 from app.libs.clock.functional import now_utc
 
 
@@ -27,7 +30,13 @@ class VenueRepository:
         """Persists a new Venue record in the database."""
         async with self.session_factory() as session:
             venue = self._create_venue(session, venue_data)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                raise EntityConflictError(
+                    f"Venue name '{venue_data.name}' already exists"
+                ) from exc
             await session.refresh(venue)
             return venue
 
@@ -41,12 +50,11 @@ class VenueRepository:
         session.add(venue)
         return venue
 
-    async def get_venues(self) -> list[Venue]:
-        """Retrieves all non-deleted venues ordered by ID."""
+    async def get_venues(self, pagination: PaginationParams) -> Page[Venue]:
+        """Retrieves one page of non-deleted venues ordered by ID."""
         async with self.session_factory() as session:
             stmt = select(Venue).where(Venue.deleted_at == None).order_by(Venue.id)
-            res = await session.execute(stmt)
-            return res.scalars().all()
+            return await paginate(session, stmt, pagination, Venue)
 
     async def get_and_check_venue_by_id(self, venue_id: int) -> Venue:
         async with self.session_factory() as session:
@@ -124,7 +132,7 @@ class VenueRepository:
             if not venue:
                 raise EntityNotFoundError(VENUE_NOT_FOUND_MSG.format(venue_id=venue_id))
 
-            zone = Zone(code=zone_data.code, venue_id=venue_id)
+            zone = Zone(name=zone_data.name, venue_id=venue_id)
             session.add(zone)
             try:
                 await session.commit()
@@ -133,20 +141,21 @@ class VenueRepository:
             except IntegrityError as exc:
                 await session.rollback()
                 raise EntityConflictError(
-                    f"Zone code '{zone_data.code}' already exists for venue {venue_id}"
+                    f"Zone name '{zone_data.name}' already exists for venue {venue_id}"
                 ) from exc
 
-    async def get_zones_by_venue_id(self, venue_id: int) -> list[Zone]:
+    async def get_zones_by_venue_id(
+        self, venue_id: int, pagination: PaginationParams
+    ) -> Page[Zone]:
         async with self.session_factory() as session:
+            await self._get_and_check_venue(session, venue_id)
             stmt = (
                 select(Zone)
-                .join(Venue, Zone.venue_id == Venue.id)
                 .where(Zone.venue_id == venue_id)
                 .where(Zone.deleted_at == None)
                 .order_by(Zone.id)
             )
-            res = await session.execute(stmt)
-            return res.scalars().all()
+            return await paginate(session, stmt, pagination, Zone)
 
     @staticmethod
     async def _get_and_check_venue(
@@ -177,12 +186,14 @@ class VenueRepository:
             raise EntityNotFoundError(ZONE_NOT_FOUND_MSG.format(zone_id=zone_id))
         return zone
 
-    async def create_seat(self, zone_id: int, seat_data: SeatBatchCreate) -> Seat:
+    async def create_seat(self, zone_id: int, seat_data: SeatCreate) -> Seat:
+        """Appends one seat to a zone, numbered max(serial_number) + 1."""
         async with self.session_factory() as session:
+            next_serial = await self._next_serial_number(session, zone_id)
             seat = Seat(
-                serial_number=seat_data.serial_number,
+                serial_number=next_serial,
                 row=seat_data.row,
-                column=seat_data.column,
+                col=seat_data.col,
                 zone_id=zone_id,
             )
             session.add(seat)
@@ -193,27 +204,37 @@ class VenueRepository:
             except IntegrityError as exc:
                 await session.rollback()
                 raise EntityConflictError(
-                    f"Seat serial number {seat_data.serial_number} already exists in zone {zone_id}"
+                    f"Seat serial number {next_serial} already exists in zone {zone_id}"
                 ) from exc
 
+    @staticmethod
+    async def _next_serial_number(session: AsyncSession, zone_id: int) -> int:
+        """Next serial number in a zone.
+
+        Deliberately counts soft-deleted rows so a number is never recycled:
+        Seat.serial_number is a durable physical label. (The partial index
+        would permit reuse; we choose not to.)
+        """
+        current_max = await session.scalar(
+            select(func.max(Seat.serial_number)).where(Seat.zone_id == zone_id)
+        )
+        return (current_max or 0) + 1
+
     async def create_seats_batch(
-        self, zone_id: int, seats_data: list[SeatBatchCreate]
-    ) -> None:
+        self, zone_id: int, seats_data: list[SeatCreate]
+    ) -> list[Seat]:
+        """Appends seats to a zone, numbered consecutively in payload order."""
         async with self.session_factory() as session:
-            # Validate for internal duplicate serial numbers within the batch request
-            serial_numbers = [s.serial_number for s in seats_data]
-            if len(serial_numbers) != len(set(serial_numbers)):
-                raise EntityConflictError(
-                    "Duplicate seat serial numbers provided in batch payload"
-                )
+            first_serial = await self._next_serial_number(session, zone_id)
+            serial_numbers = list(range(first_serial, first_serial + len(seats_data)))
             seats = [
                 Seat(
-                    serial_number=s.serial_number,
+                    serial_number=serial,
                     row=s.row,
-                    column=s.column,
+                    col=s.col,
                     zone_id=zone_id,
                 )
-                for s in seats_data
+                for serial, s in zip(serial_numbers, seats_data)
             ]
             session.add_all(seats)
             try:
@@ -224,9 +245,23 @@ class VenueRepository:
                     f"One or more seat serial numbers already exist in zone {zone_id}"
                 ) from exc
 
-    async def get_seats_by_zone_id(self, zone_id: int) -> list[Seat]:
+            # created_at/updated_at are generated by the DB (now()), so the
+            # inserted instances have them unloaded. Re-select once instead of
+            # refreshing each row individually.
+            stmt = (
+                select(Seat)
+                .where(Seat.zone_id == zone_id)
+                .where(Seat.serial_number.in_(serial_numbers))
+                .order_by(Seat.serial_number)
+            )
+            res = await session.execute(stmt)
+            return list(res.scalars().all())
+
+    async def get_seats_by_zone_id(
+        self, zone_id: int, pagination: PaginationParams
+    ) -> Page[Seat]:
         async with self.session_factory() as session:
-            zone = self._get_and_check_zone(session, zone_id)
+            await self._get_and_check_zone(session, zone_id)
 
             stmt = (
                 select(Seat)
@@ -234,8 +269,7 @@ class VenueRepository:
                 .where(Seat.deleted_at == None)
                 .order_by(Seat.serial_number)
             )
-            res = await session.execute(stmt)
-            return res.scalars().all()
+            return await paginate(session, stmt, pagination, Seat)
 
     async def get_and_check_seat(self, seat_id: int) -> Seat:
         async with self.session_factory() as session:

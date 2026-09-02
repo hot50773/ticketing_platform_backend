@@ -1,8 +1,12 @@
+"""API contracts for the Venue aggregate (Venue / Zone / Seat).
+
+Field names follow the ORM models (`col`, `name`).
+"""
 from datetime import datetime
 
 from sqlmodel import SQLModel, Field
 
-from app.schemas import _TableMetaMixin
+from ._shared import _TableMetaMixin
 
 
 class VenueCreate(SQLModel):
@@ -23,6 +27,35 @@ class VenueResponse(SQLModel):
     deleted_at: datetime | None = None
 
 
+class SeatBase(SQLModel):
+    """A seat's physical position inside a zone."""
+    row: int = Field(ge=1)
+    col: int = Field(ge=1)
+
+
+class SeatCreate(SeatBase):
+    """POST /zones/{zone_id}/seats.
+
+    `serial_number` is NOT accepted: the backend numbers seats per zone,
+    continuing from the zone's current maximum.
+    """
+    pass
+
+
+class SeatBatchCreateRequest(SQLModel):
+    """POST /zones/{zone_id}/seats/batch payload wrapper.
+
+    Seats are numbered in the order given.
+    """
+    seats: list[SeatCreate] = Field(min_length=1)
+
+
+class SeatResponse(SeatBase, _TableMetaMixin):
+    """Schema representing Seat details returned by API."""
+    serial_number: int
+    zone_id: int
+
+
 class ZoneBase(SQLModel):
     """Schema representing API payload to create a new Zone."""
     name: str = Field(max_length=100)
@@ -35,26 +68,4 @@ class ZoneResponse(_TableMetaMixin, ZoneBase):
 
 
 class ZoneCreate(ZoneBase):
-    seats: list[SeatBatchCreate]
-
-
-class SeatBase(SQLModel):
-    """Base schema for Seat."""
-    serial_number: int
-    row: int
-    column: int
-
-
-class SeatBatchCreate(SeatBase):
-    """Schema representing API payload to create a new Seat."""
-    pass
-
-
-class SeatResponse(SeatBase, _TableMetaMixin):
-    """Schema representing Seat details returned by API."""
-    zone_id: int
-
-
-class ZoneUpdate(ZoneBase):
-    id: int
-    seats: list[SeatBatchCreate]
+    seats: list[SeatCreate]

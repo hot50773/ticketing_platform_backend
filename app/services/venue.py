@@ -1,5 +1,6 @@
 from app.models import Venue, Zone, Seat
-from app.schemas.venue import VenueCreate, ZoneBase, SeatBatchCreate
+from app.schemas import Page, PaginationParams
+from app.schemas.venue import VenueCreate, ZoneBase, SeatCreate
 from app.repositories.venue import VenueRepository
 from app.exceptions import EntityNotFoundError, VENUE_NOT_FOUND_MSG, SEAT_NOT_FOUND_MSG
 
@@ -12,8 +13,8 @@ class VenueService:
     async def create_venue(self, venue_data: VenueCreate) -> Venue:
         return await self._repository.create_venue(venue_data)
 
-    async def list_venues(self) -> list[Venue]:
-        return await self._repository.get_venues()
+    async def list_venues(self, pagination: PaginationParams) -> Page[Venue]:
+        return await self._repository.get_venues(pagination)
 
     async def get_venue(self, venue_id: int) -> Venue:
         venue = await self._repository.get_and_check_venue_by_id(venue_id)
@@ -27,23 +28,28 @@ class VenueService:
     async def create_zone(self, venue_id: int, zone_data: ZoneBase) -> Zone:
         return await self._repository.create_zone(venue_id, zone_data)
 
-    async def list_zones_by_venue(self, venue_id: int) -> list[Zone]:
-        return await self._repository.get_zones_by_venue_id(venue_id)
+    async def list_zones_by_venue(
+        self, venue_id: int, pagination: PaginationParams
+    ) -> Page[Zone]:
+        return await self._repository.get_zones_by_venue_id(venue_id, pagination)
 
     async def get_and_check_zone(self, zone_id: int) -> Zone:
         return await self._repository.get_and_check_zone(zone_id)
 
-    async def create_seat(self, zone_id: int, seat_data: SeatBatchCreate) -> Seat:
+    async def create_seat(self, zone_id: int, seat_data: SeatCreate) -> Seat:
         await self.get_and_check_zone(zone_id)
         return await self._repository.create_seat(zone_id, seat_data)
 
-    async def batch_create_seats(self, zone_id: int, seats_data: list[SeatBatchCreate]) -> None:
-        if seats_data:
-            await self.get_and_check_zone(zone_id)
-            await self._repository.create_seats_batch(zone_id, seats_data)
+    async def batch_create_seats(
+        self, zone_id: int, seats_data: list[SeatCreate]
+    ) -> list[Seat]:
+        await self.get_and_check_zone(zone_id)
+        return await self._repository.create_seats_batch(zone_id, seats_data)
 
-    async def list_seats_by_zone(self, zone_id: int) -> list[Seat]:
-        return await self._repository.get_seats_by_zone_id(zone_id)
+    async def list_seats_by_zone(
+        self, zone_id: int, pagination: PaginationParams
+    ) -> Page[Seat]:
+        return await self._repository.get_seats_by_zone_id(zone_id, pagination)
 
     async def get_seat(self, seat_id: int) -> Seat:
         return await self._repository.get_and_check_seat(seat_id)
