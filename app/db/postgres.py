@@ -6,8 +6,11 @@ class Database:
     """Database connection wrapper exposing the engine and session maker."""
 
     def __init__(self):
-        self._engine = create_async_engine(settings.database_url, echo=True)
-        self.async_session_maker = async_sessionmaker(self._engine)
+        self._engine = create_async_engine(settings.database_url, echo=settings.db_echo)
+        # expire_on_commit=False is mandatory for AsyncSession: with the default
+        # True, touching any attribute after commit triggers a lazy refresh
+        # outside the greenlet context and raises MissingGreenlet.
+        self.async_session_maker = async_sessionmaker(self._engine, expire_on_commit=False)
 
     def get_async_session(self) -> AsyncSession:
         """Returns a new database session."""

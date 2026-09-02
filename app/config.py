@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     
     enable_cron_jobs: bool = True
+    db_echo: bool = False  # SQLAlchemy statement logging; noisy, keep off by default
 
 settings = Settings()
 
