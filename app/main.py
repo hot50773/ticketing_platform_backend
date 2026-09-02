@@ -2,8 +2,15 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 import sys
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from app.containers import Container
+from app.exceptions import (
+    BusinessRuleViolationError,
+    EntityConflictError,
+    EntityNotFoundError,
+    InvalidEventTimeError,
+)
 from app.routers.event import router as events_router
 from app.routers.venue import router as venue_router
 from app.jobs.scheduler import start_scheduler
@@ -50,7 +57,28 @@ app = FastAPI(
     docs_url="/docs"
 )
 
-# 3. Register Routers
+# 3. Map domain exceptions to HTTP status codes in one place
+@app.exception_handler(EntityNotFoundError)
+async def _handle_not_found(_request: Request, exc: EntityNotFoundError):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidEventTimeError)
+async def _handle_invalid_time(_request: Request, exc: InvalidEventTimeError):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(EntityConflictError)
+async def _handle_conflict(_request: Request, exc: EntityConflictError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(BusinessRuleViolationError)
+async def _handle_rule_violation(_request: Request, exc: BusinessRuleViolationError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+# 4. Register Routers
 app.include_router(events_router, prefix="/api/v1")
 app.include_router(venue_router, prefix="/api/v1")
 

@@ -36,7 +36,7 @@
     - 下架：validate no active order -> update_event_status
 
 # 更新活動的場地座位
-- precondition: 已上架的活動不可編輯場地的分區、座位；只可以更新票價
+- precondition: 已上架的活動不可編輯場地的分區、座位；分區的 name 和 price 上架後仍可更新（2026-09-02 更正）
 1. 新增分區 & 該區座位
 2. 批量更新分區座位（依照需求新增 or 更新 or 刪除該分區底下的所有座位）
 3. 更新分區詳情（name, price, detail）
