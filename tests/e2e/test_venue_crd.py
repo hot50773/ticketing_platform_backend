@@ -136,6 +136,16 @@ async def test_soft_deleted_name_can_be_reused(async_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_venue_requires_description(async_client: AsyncClient):
+    """venue.description is NOT NULL, so the schema must reject a missing one
+    with 422 rather than letting it reach the DB as an IntegrityError."""
+    resp = await async_client.post(
+        "/api/v1/venues", json={"name": "No Description", "address": "a"}
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_venue_list_pagination(async_client: AsyncClient):
     """GET /venues is paginated: items is windowed, total is the full count."""
     for i in range(3):

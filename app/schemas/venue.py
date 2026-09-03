@@ -12,7 +12,7 @@ from ._shared import _TableMetaMixin
 class VenueCreate(SQLModel):
     """Schema representing API payload to create a new Venue."""
     name: str = Field(max_length=100)
-    description: str | None = Field(default=None, max_length=1000)
+    description: str = Field(max_length=1000)
     address: str = Field(max_length=100)
 
 
@@ -20,7 +20,7 @@ class VenueResponse(SQLModel):
     """Schema representing Venue details returned by API."""
     id: int
     name: str
-    description: str | None = None
+    description: str
     address: str
     created_at: datetime
     updated_at: datetime
