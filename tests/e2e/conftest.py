@@ -113,17 +113,19 @@ async def seeded_event(container: Container, seeded_venue_and_seats: dict) -> di
 
     repo = container.event_repository()
     start_at = now_utc() + timedelta(days=30)
-    layout = await repo.create_event_from_venue_template(
-        EventCreate(
-            name="World Tour 2026",
-            description="Mega Live Concert",
-            start_at=start_at,
-            end_at=start_at + timedelta(hours=3),
-            venue_id=seeded_venue_and_seats["venue_id"],
-        )
+    payload = EventCreate(
+        name="World Tour 2026",
+        description="Mega Live Concert",
+        start_at=start_at,
+        end_at=start_at + timedelta(hours=3),
+        venue_id=seeded_venue_and_seats["venue_id"],
     )
+    async with repo.create(payload) as event:
+        layout = await event.layout()
+        event_id = event.event.id
+
     return {
-        "event_id": layout.event.id,
+        "event_id": event_id,
         "zone_ids": {zone.zone.name: zone.zone.id for zone in layout.zones},
         "start_at": start_at,
         "user_id": seeded_venue_and_seats["users"][0],

@@ -5,7 +5,9 @@ from app.db.redis import RedisClient
 from app.repositories.event import EventRepository
 from app.repositories.venue import VenueRepository
 from app.services.event import EventService
+from app.services.event_layout import EventLayoutService
 from app.services.venue import VenueService
+from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
 
 
@@ -45,6 +47,9 @@ class Container(containers.DeclarativeContainer):
     # Domain rule validators (pure, no I/O)
     event_rule_validator = providers.Factory(EventRuleValidator)
 
+    # ORM -> schema translation, kept out of the services
+    event_schema_mapper = providers.Factory(EventSchemaMapper)
+
     # Services
     venue_service = providers.Factory(
         VenueService,
@@ -54,5 +59,13 @@ class Container(containers.DeclarativeContainer):
     event_service = providers.Factory(
         EventService,
         event_repository=event_repository,
-        event_rule_validator=event_rule_validator
+        event_rule_validator=event_rule_validator,
+        event_schema_mapper=event_schema_mapper
+    )
+
+    event_layout_service = providers.Factory(
+        EventLayoutService,
+        event_repository=event_repository,
+        event_rule_validator=event_rule_validator,
+        event_schema_mapper=event_schema_mapper
     )

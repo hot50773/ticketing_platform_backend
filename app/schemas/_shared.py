@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Annotated, Generic, TypeVar
 
@@ -45,6 +46,19 @@ class Page(BaseModel, Generic[T]):
     total: int
     limit: int
     offset: int
+
+    def map(self, transform: Callable[[T], object]) -> "Page":
+        """Re-wraps the page with every item transformed, counters untouched.
+
+        Saves each caller from restating total/limit/offset when turning a page
+        of ORM rows into a page of response schemas.
+        """
+        return Page(
+            items=[transform(item) for item in self.items],
+            total=self.total,
+            limit=self.limit,
+            offset=self.offset,
+        )
 
 
 class _TableMetaMixin:

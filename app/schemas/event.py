@@ -179,8 +179,26 @@ class EventZoneWithSeatCountInternal(SQLModel):
     zone: EventZone
     seat_count: int
 
+class EventSeatInternal(SQLModel):
+    event_zone_id: int
+    serial_number: int
+    row: int
+    col: int
+    status: SeatStatus
+
+class EventZoneWithSeatInternal(SQLModel):
+    id: int
+    name: str
+    price: int | None
+    seats: list[EventSeatInternal]
+
 
 class EventLayoutInternal(SQLModel):
+    event: Event
+    zones: list[EventZoneWithSeatInternal] = Field(default_factory=list)
+
+
+class EventLayoutSummaryInternal(SQLModel):
     """An event together with its zones and per-zone seat counts."""
     event: Event
     zones: list[EventZoneWithSeatCountInternal] = Field(default_factory=list)

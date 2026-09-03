@@ -48,6 +48,12 @@ async def venue_template(container: Container) -> dict:
         return {"venue_id": venue.id, "zone_a_id": zone_a.id, "zone_b_id": zone_b.id}
 
 
+async def clone(repo, venue_id: int):
+    """Runs the create use case and returns the resulting layout."""
+    async with repo.create(payload(venue_id)) as event:
+        return await event.layout()
+
+
 def payload(venue_id: int) -> EventCreate:
     return EventCreate(
         name="World Tour 2026",
@@ -84,7 +90,7 @@ async def read_layout(container: Container, event_id: int):
 async def test_clone_copies_only_live_zones_and_seats(container: Container, venue_template: dict):
     """A1 / A5 / A6: soft-deleted template rows are not copied."""
     repo = container.event_repository()
-    layout = await repo.create_event_from_venue_template(payload(venue_template["venue_id"]))
+    layout = await clone(repo, venue_template["venue_id"])
 
     zones, seats = await read_layout(container, layout.event.id)
     assert [z.name for z in zones] == ["A", "B"]  # zone C was soft-deleted
@@ -100,7 +106,7 @@ async def test_clone_reuses_template_serial_numbers_and_allows_holes(
 ):
     """A3 / A6: serial_number is copied verbatim, so zone A keeps the 1, 3 hole."""
     repo = container.event_repository()
-    layout = await repo.create_event_from_venue_template(payload(venue_template["venue_id"]))
+    layout = await clone(repo, venue_template["venue_id"])
 
     zones, seats = await read_layout(container, layout.event.id)
     zone_a = next(z for z in zones if z.name == "A")
@@ -113,7 +119,7 @@ async def test_clone_creates_unpublished_event_with_unset_prices(
 ):
     """A2: unpublished, every price NULL, every seat AVAILABLE."""
     repo = container.event_repository()
-    layout = await repo.create_event_from_venue_template(payload(venue_template["venue_id"]))
+    layout = await clone(repo, venue_template["venue_id"])
 
     zones, seats = await read_layout(container, layout.event.id)
     assert layout.event.is_active is False
@@ -125,7 +131,7 @@ async def test_clone_creates_unpublished_event_with_unset_prices(
 async def test_clone_records_template_origin(container: Container, venue_template: dict):
     """A4: source_zone_id / source_seat_id point back at the template."""
     repo = container.event_repository()
-    layout = await repo.create_event_from_venue_template(payload(venue_template["venue_id"]))
+    layout = await clone(repo, venue_template["venue_id"])
 
     zones, seats = await read_layout(container, layout.event.id)
     assert {z.name: z.source_zone_id for z in zones} == {
@@ -145,7 +151,7 @@ async def test_clone_records_template_origin(container: Container, venue_templat
 @pytest.mark.asyncio
 async def test_clone_returns_seat_count_per_zone(container: Container, venue_template: dict):
     repo = container.event_repository()
-    layout = await repo.create_event_from_venue_template(payload(venue_template["venue_id"]))
+    layout = await clone(repo, venue_template["venue_id"])
 
     assert {z.zone.name: z.seat_count for z in layout.zones} == {"A": 2, "B": 2}
 
@@ -161,7 +167,7 @@ async def test_venue_without_zone_still_creates_an_event(container: Container):
         venue_id = venue.id
 
     repo = container.event_repository()
-    layout = await repo.create_event_from_venue_template(payload(venue_id))
+    layout = await clone(repo, venue_id)
 
     assert layout.event.id is not None
     assert layout.zones == []
@@ -172,7 +178,7 @@ async def test_clone_rejects_unknown_venue(container: Container):
     """A8."""
     repo = container.event_repository()
     with pytest.raises(EntityNotFoundError):
-        await repo.create_event_from_venue_template(payload(9999))
+        await clone(repo, 9999)
 
 
 @pytest.mark.asyncio
@@ -187,7 +193,7 @@ async def test_clone_rejects_soft_deleted_venue(container: Container):
 
     repo = container.event_repository()
     with pytest.raises(EntityNotFoundError):
-        await repo.create_event_from_venue_template(payload(venue_id))
+        await clone(repo, venue_id)
 
 
 @pytest.mark.asyncio
@@ -201,7 +207,7 @@ async def test_clone_is_atomic(container: Container, venue_template: dict, monke
     monkeypatch.setattr(type(repo), "_clone_seats", boom)
 
     with pytest.raises(RuntimeError):
-        await repo.create_event_from_venue_template(payload(venue_template["venue_id"]))
+        await clone(repo, venue_template["venue_id"])
 
     db = container.db()
     async with db.get_async_session() as session:
