@@ -28,6 +28,11 @@ class EventPublishedError(BusinessRuleViolationError):
     pass
 
 
+class EventHasNoZoneError(BusinessRuleViolationError):
+    """Raised when publishing an event that has no zone at all."""
+    pass
+
+
 class TicketPriceNotReadyError(BusinessRuleViolationError):
     """Raised when publishing an event whose zones still have no ticket price."""
     pass

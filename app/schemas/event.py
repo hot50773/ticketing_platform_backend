@@ -23,7 +23,18 @@ from ._shared import UtcDatetime, _TableMetaMixin
 # --------------------------------------------------------------------------- #
 # Requests - Event
 # --------------------------------------------------------------------------- #
-class EventCreate(SQLModel):
+class EventHoldingTime(SQLModel):
+    """The window an event is held in.
+
+    Shared base of every payload that carries a holding time, so the rule
+    validator can take one type and both call sites pass their payload through
+    unchanged.
+    """
+    start_at: UtcDatetime
+    end_at: UtcDatetime
+
+
+class EventCreate(EventHoldingTime):
     """POST /events.
 
     Zones and seats are not part of the payload: they are cloned from the
@@ -32,8 +43,6 @@ class EventCreate(SQLModel):
     """
     name: str = Field(max_length=100)
     description: str | None = Field(default=None, max_length=1000)
-    start_at: UtcDatetime
-    end_at: UtcDatetime
     venue_id: int
 
 
@@ -43,10 +52,9 @@ class EventProfileUpdate(SQLModel):
     description: str | None = Field(default=None, max_length=1000)
 
 
-class EventHoldingTimeUpdate(SQLModel):
+class EventHoldingTimeUpdate(EventHoldingTime):
     """PATCH /events/{event_id}/holding_time. Rejected once published."""
-    start_at: UtcDatetime
-    end_at: UtcDatetime
+    pass
 
 
 class EventStatusUpdate(SQLModel):
@@ -157,6 +165,12 @@ class EventLayoutInternal(SQLModel):
     zones: list[EventZoneWithSeatCountInternal] = Field(default_factory=list)
 
 
+class EventStatusInternal(SQLModel):
+    """An event's publication state, as handed to the rule validator."""
+    id: int
+    is_active: bool
+
+
 class EventZonePricingInternal(SQLModel):
     """Price projection used by the publish rule."""
     id: int
@@ -165,9 +179,13 @@ class EventZonePricingInternal(SQLModel):
 
 
 class EventOrderStatsInternal(SQLModel):
-    """Order counters used by the unpublish / delete rules."""
-    pending_count: int
-    confirmed_count: int
+    """Order counter used by the unpublish / delete rules.
+
+    Counts orders that are NOT soft-deleted, whatever their status - CANCELLED
+    included. An order is soft-deleted when the system releases it (expired
+    cart), and only those stop blocking; a user-cancelled order still counts.
+    """
+    active_order_count: int
 
 
 class EventSeatSyncCountsInternal(SQLModel):

@@ -46,6 +46,6 @@
 - update_event_seat PATCH /events/:id/event_zones/:id/seats (validate: 已上架的活動不可更新座位)
 
 # 刪除活動
-- precondition -> 已有成立訂單的活動不可刪除
+- precondition -> 已有訂單的活動不可刪除（不限訂單狀態，2026-09-02 更正）
 ## API
 - delete_event DELETE /events/:id

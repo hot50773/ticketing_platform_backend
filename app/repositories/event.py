@@ -120,8 +120,8 @@ class EventRepository:
         raise NotImplementedError
 
     async def get_event_order_stats(self, event_id: int) -> EventOrderStatsInternal:
-        """Counts the event's pending and confirmed orders, used by the
-        unpublish and delete rules.
+        """Counts the event's orders that are not soft-deleted (any status),
+        used by the unpublish and delete rules.
         """
         raise NotImplementedError
 

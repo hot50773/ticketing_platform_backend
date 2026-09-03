@@ -9,12 +9,18 @@ from datetime import datetime
 
 from app.exceptions import (
     ActiveOrdersExistError,
+    EventHasNoZoneError,
     EventPublishedError,
     InvalidEventTimeError,
     TicketPriceNotReadyError,
 )
 from app.libs.clock.functional import now_utc
-from app.schemas.event import EventOrderStatsInternal, EventZonePricingInternal
+from app.schemas.event import (
+    EventHoldingTime,
+    EventOrderStatsInternal,
+    EventStatusInternal,
+    EventZonePricingInternal,
+)
 
 
 class EventRuleValidator:
@@ -23,45 +29,46 @@ class EventRuleValidator:
     def __init__(self, clock: Callable[[], datetime] = now_utc):
         self._now = clock
 
-    def validate_holding_time(self, start_at: datetime, end_at: datetime) -> None:
-        """start_at must be in the future and end_at must be later than start_at.
+    def validate_holding_time(self, holding_time: EventHoldingTime) -> None:
+        """start_at must be strictly in the future, end_at strictly after it."""
+        start_at, end_at = holding_time.start_at, holding_time.end_at
+        now = self._now()
+        if start_at <= now:
+            raise InvalidEventTimeError(
+                f"start_at {start_at.isoformat()} must be later than now {now.isoformat()}"
+            )
+        if end_at <= start_at:
+            raise InvalidEventTimeError(
+                f"end_at {end_at.isoformat()} must be later than "
+                f"start_at {start_at.isoformat()}"
+            )
 
-        Raises InvalidEventTimeError.
+    def validate_unpublished(self, event_status: EventStatusInternal) -> None:
+        """Guards every operation that a published event must not allow:
+        changing the holding time, and adding or reshaping zones and seats.
+
+        Zone name and price are exempt - they stay editable after publishing.
         """
-        raise NotImplementedError
-
-    def validate_holding_time_editable(self, is_active: bool) -> None:
-        """Holding time may only change while the event is unpublished.
-
-        Raises EventPublishedError.
-        """
-        raise NotImplementedError
-
-    def validate_layout_editable(self, is_active: bool) -> None:
-        """Zones and seats may only be added or reshaped while unpublished.
-
-        Zone name and price are exempt: those stay editable after publishing.
-        Raises EventPublishedError.
-        """
-        raise NotImplementedError
+        if event_status.is_active:
+            raise EventPublishedError(
+                f"Event {event_status.id} is published; "
+                f"this operation is only allowed while it is unpublished"
+            )
 
     def validate_publishable(self, zones: list[EventZonePricingInternal]) -> None:
-        """Every zone must have a price set (not None) before going live.
+        """An event goes live only with at least one zone, all of them priced."""
+        if not zones:
+            raise EventHasNoZoneError("Cannot publish an event that has no zone")
 
-        Raises TicketPriceNotReadyError.
-        """
-        raise NotImplementedError
+        unpriced = [zone.name for zone in zones if zone.price is None]
+        if unpriced:
+            raise TicketPriceNotReadyError(
+                f"Ticket price is not set for zone(s): {', '.join(unpriced)}"
+            )
 
-    def validate_unpublishable(self, order_stats: EventOrderStatsInternal) -> None:
-        """An event with live orders cannot be taken offline.
-
-        Raises ActiveOrdersExistError.
-        """
-        raise NotImplementedError
-
-    def validate_deletable(self, order_stats: EventOrderStatsInternal) -> None:
-        """An event with confirmed orders cannot be deleted.
-
-        Raises ActiveOrdersExistError.
-        """
-        raise NotImplementedError
+    def validate_no_live_order(self, order_stats: EventOrderStatsInternal) -> None:
+        """Guards unpublishing and deleting: neither is allowed while orders exist."""
+        if order_stats.active_order_count > 0:
+            raise ActiveOrdersExistError(
+                f"This event still has {order_stats.active_order_count} order(s)"
+            )
