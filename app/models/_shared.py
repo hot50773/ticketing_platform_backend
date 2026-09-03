@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, func, text
+from sqlalchemy import DateTime, func
 from sqlmodel import SQLModel, Field
 
 
@@ -13,12 +13,13 @@ class TableBase(SQLModel):
         sa_type=DateTime(timezone=True),  # type: ignore
         default_factory=func.now,
     )
+    # onupdate, not server_onupdate: the latter only *tells* SQLAlchemy that
+    # the database generates the value, it emits no SQL. With no DB trigger in
+    # place, server_onupdate left updated_at frozen at its insert value.
     updated_at: datetime = Field(
         sa_type=DateTime(timezone=True),  # type: ignore
         default_factory=func.now,
-        sa_column_kwargs={
-            "server_onupdate": text('now'),
-        }
+        sa_column_kwargs={"onupdate": func.now()},
     )
 
 class SoftDeletable(SQLModel):
