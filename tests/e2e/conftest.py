@@ -6,8 +6,11 @@ from httpx import AsyncClient, ASGITransport
 from sqlmodel import text
 
 from app.containers import Container
+from app.enums import OrderStatus, PaymentStatus
+from app.libs.clock.functional import now_utc
 from app.main import app
-from app.models import Seat, User, Venue, Zone
+from app.models import Order, Seat, User, Venue, Zone
+from app.schemas.event import EventCreate
 
 
 @pytest.fixture(scope="session")
@@ -98,3 +101,54 @@ async def seeded_venue_and_seats(container: Container) -> dict:
             },
             "users": [user_1.id, user_2.id],
         }
+
+
+@pytest.fixture
+async def seeded_event(container: Container, seeded_venue_and_seats: dict) -> dict:
+    """An unpublished event cloned from the 2-zone / 4-seat venue.
+
+    Every zone price starts unset, so the event cannot be published as-is.
+    """
+    from datetime import timedelta
+
+    repo = container.event_repository()
+    start_at = now_utc() + timedelta(days=30)
+    layout = await repo.create_event_from_venue_template(
+        EventCreate(
+            name="World Tour 2026",
+            description="Mega Live Concert",
+            start_at=start_at,
+            end_at=start_at + timedelta(hours=3),
+            venue_id=seeded_venue_and_seats["venue_id"],
+        )
+    )
+    return {
+        "event_id": layout.event.id,
+        "zone_ids": {zone.zone.name: zone.zone.id for zone in layout.zones},
+        "start_at": start_at,
+        "user_id": seeded_venue_and_seats["users"][0],
+        "venue_id": seeded_venue_and_seats["venue_id"],
+    }
+
+
+@pytest.fixture
+def place_order(container: Container):
+    """Inserts an order for an event, so the "no live order" rule can be exercised."""
+
+    async def _place(event_id: int, user_id: int, soft_deleted: bool = False,
+                     status: OrderStatus = OrderStatus.PENDING) -> int:
+        db = container.db()
+        async with db.get_async_session() as session:
+            order = Order(
+                user_id=user_id,
+                event_id=event_id,
+                checkout_amount=0,
+                status=status,
+                payment_status=PaymentStatus.PENDING,
+                deleted_at=now_utc() if soft_deleted else None,
+            )
+            session.add(order)
+            await session.commit()
+            return order.id
+
+    return _place

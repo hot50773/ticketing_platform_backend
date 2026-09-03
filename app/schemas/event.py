@@ -9,7 +9,9 @@ has 10k+ EventSeat rows, so the layout is fetched per zone through its own
 endpoint instead.
 """
 from datetime import datetime
+from typing import Annotated
 
+from pydantic import AfterValidator
 from sqlmodel import SQLModel, Field
 
 from app.enums import SeatStatus
@@ -42,14 +44,14 @@ class EventCreate(EventHoldingTime):
     before the event can be published.
     """
     name: str = Field(max_length=100)
-    description: str | None = Field(default=None, max_length=1000)
+    description: str = Field(max_length=1000)
     venue_id: int
 
 
 class EventProfileUpdate(SQLModel):
     """PATCH /events/{event_id}/profile."""
     name: str = Field(max_length=100)
-    description: str | None = Field(default=None, max_length=1000)
+    description: str = Field(max_length=1000)
 
 
 class EventHoldingTimeUpdate(EventHoldingTime):
@@ -68,23 +70,38 @@ class EventStatusUpdate(SQLModel):
 class EventSeatLayout(SQLModel):
     """One seat position inside a zone layout payload.
 
-    `serial_number` is NOT accepted: the backend numbers a zone's seats
-    contiguously from 1, and that number is the seat's Redis bitmap offset
-    (offset = serial_number - 1). `(row, col)` is therefore the key the client
-    identifies a seat by.
+    `serial_number` is NOT accepted: it is the seat's Redis bitmap offset
+    (offset = serial_number - 1) and stays backend-owned. `(row, col)` is
+    therefore the key the client identifies a seat by.
+
+    Numbers are unique per zone but NOT contiguous - soft-deleting a seat
+    leaves a hole, and holes are never reclaimed. A Redis bitmap for a zone
+    must therefore be sized by max(serial_number), not by the seat count.
     """
     row: int = Field(ge=1)
     col: int = Field(ge=1)
 
 
+def _reject_duplicate_positions(seats: list[EventSeatLayout]) -> list[EventSeatLayout]:
+    """(row, col) is a seat's identity, so a layout payload cannot repeat one."""
+    positions = [(seat.row, seat.col) for seat in seats]
+    if len(positions) != len(set(positions)):
+        raise ValueError("duplicate (row, col) positions in seat layout")
+    return seats
+
+
+SeatLayout = Annotated[list[EventSeatLayout], AfterValidator(_reject_duplicate_positions)]
+
+
 class EventZoneCreate(SQLModel):
     """POST /events/{event_id}/event_zones. Rejected once published.
 
-    Seats are numbered 1..N by the backend in `(row, col)` order.
+    This zone has no venue template, so its seats are numbered from 1 in
+    payload order.
     """
     name: str = Field(max_length=100)
     price: int | None = Field(default=None, ge=0, description="None = 尚未設定票價")
-    seats: list[EventSeatLayout] = Field(default_factory=list)
+    seats: SeatLayout = Field(default_factory=list)
 
 
 class EventZoneProfileUpdate(SQLModel):
@@ -101,14 +118,15 @@ class EventSeatLayoutUpdate(SQLModel):
 
     Full-replacement semantics: `seats` is the desired final layout of the
     zone, keyed on `(row, col)`. Positions absent from the payload are
-    soft-deleted; new positions are inserted; the whole zone is then
-    renumbered 1..N in `(row, col)` order.
+    soft-deleted, new positions are inserted, and everything else is left
+    untouched.
 
-    Renumbering is only safe because this endpoint is rejected once the event
-    is published - after publishing, serial_number (= the Redis bitmap offset)
-    must never move.
+    Surviving seats keep their serial_number: the layout is never renumbered,
+    so a Redis offset can only ever be added or retired, never reassigned to a
+    different seat. New seats take max(serial_number) + 1, counting
+    soft-deleted rows so a retired offset is never recycled.
     """
-    seats: list[EventSeatLayout]
+    seats: SeatLayout
 
 
 # --------------------------------------------------------------------------- #
@@ -123,7 +141,7 @@ class EventZoneResponse(_TableMetaMixin, SQLModel):
 
 class EventResponse(_TableMetaMixin, SQLModel):
     name: str
-    description: str | None = None
+    description: str
     start_at: datetime
     end_at: datetime
     venue_id: int
@@ -144,10 +162,13 @@ class EventSeatResponse(_TableMetaMixin, SQLModel):
 
 
 class EventSeatLayoutSyncResponse(SQLModel):
-    """Outcome of a batch layout replacement."""
+    """Outcome of a batch layout replacement.
+
+    There is no update count: `(row, col)` is the seat's identity, so a seat
+    is either added, removed, or left exactly as it was.
+    """
     created_count: int
     deleted_count: int
-    renumbered_count: int
     seat_count: int
 
 
@@ -192,5 +213,4 @@ class EventSeatSyncCountsInternal(SQLModel):
     """Row counts produced by a layout replacement transaction."""
     created_count: int
     deleted_count: int
-    renumbered_count: int
     seat_count: int

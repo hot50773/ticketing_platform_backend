@@ -38,7 +38,12 @@
 # 更新活動的場地座位
 - precondition: 已上架的活動不可編輯場地的分區、座位；分區的 name 和 price 上架後仍可更新（2026-09-02 更正）
 1. 新增分區 & 該區座位
-2. 批量更新分區座位（依照需求新增 or 更新 or 刪除該分區底下的所有座位）
+2. 批量更新分區座位（依照需求新增 or 刪除該分區底下的座位）
+   - serial_number 由後端配號，是 Redis bitmap 的 offset（offset = serial_number - 1）
+   - 從場地模板複製時直接沿用 Seat.serial_number
+   - 編號在分區內唯一，但**不要求連續**；刪除座位留下的空洞不回收
+   - 只做增刪，不重建、不重新編號，倖存的座位一律保留原編號
+     （2026-09-03 更正：原訂為重新編號 1..N）
 3. 更新分區詳情（name, price, detail）
 ## API
 - create_event_zone POST /events/:id/event_zones (validate: 已上架的活動不可建立新的分區)

@@ -9,6 +9,7 @@ from datetime import datetime
 
 from app.exceptions import (
     ActiveOrdersExistError,
+    SeatOccupiedError,
     EventHasNoZoneError,
     EventPublishedError,
     InvalidEventTimeError,
@@ -64,6 +65,14 @@ class EventRuleValidator:
         if unpriced:
             raise TicketPriceNotReadyError(
                 f"Ticket price is not set for zone(s): {', '.join(unpriced)}"
+            )
+
+    def validate_no_occupied_seat(self, occupied_seat_count: int) -> None:
+        """Guards a layout rewrite: a seat somebody is holding must not be
+        dropped, even while the event is unpublished."""
+        if occupied_seat_count > 0:
+            raise SeatOccupiedError(
+                f"{occupied_seat_count} seat(s) in this zone are locked or reserved"
             )
 
     def validate_no_live_order(self, order_stats: EventOrderStatsInternal) -> None:
