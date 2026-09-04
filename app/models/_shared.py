@@ -8,7 +8,7 @@ from sqlmodel import SQLModel, Field
 # 再交給 Column()，而 Column() 型別「實例」也收。要帶 timezone=True 就必須傳實例，
 # 因此下面的 sa_type 需要 type: ignore 壓掉過窄的標註。
 class TableBase(SQLModel):
-    id: int | None = Field(default=None, primary_key=True)
+    id: int = Field(primary_key=True)
     created_at: datetime = Field(
         sa_type=DateTime(timezone=True),  # type: ignore
         default_factory=func.now,

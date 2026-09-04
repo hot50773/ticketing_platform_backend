@@ -45,12 +45,14 @@ from app.schemas.event import (
     EventSeatSyncCountsInternal,
     EventStatusInternal,
     EventZoneCreate,
-    EventZonePricingInternal,
+    EventZoneInternal,
     EventZoneProfileUpdate,
     EventZoneWithSeatCountInternal,
+    EventZoneWithSeatInternal,
+    EventLayoutInternal, EventSeatInternal,
 )
 
-OCCUPIED_SEAT_STATUSES = (SeatStatus.LOCKED, SeatStatus.RESERVED)
+OCCUPIED_SEAT_STATUS = SeatStatus.RESERVED
 
 
 class EventAggregate:
@@ -73,18 +75,45 @@ class EventAggregate:
     def status(self) -> EventStatusInternal:
         return EventStatusInternal(id=self._event.id, is_active=self._event.is_active)
 
-    async def zone_pricings(self) -> list[EventZonePricingInternal]:
+    async def event_zones(self) -> list[EventZoneInternal]:
         """Every live zone's price, used by the publish rule."""
         rows = await self._session.execute(
-            select(EventZone.id, EventZone.name, EventZone.price)
+            select(EventZone)
             .where(EventZone.event_id == self._event.id)
             .where(EventZone.deleted_at == None)
-            .order_by(EventZone.name)
         )
         return [
-            EventZonePricingInternal(id=zone_id, name=name, price=price)
-            for zone_id, name, price in rows.all()
+            EventZoneInternal(id=row.id, name=row.name, price=row.price)
+            for row in rows.all()
         ]
+
+    async def event_layout(self) -> EventLayoutInternal:
+        """Every live zone's price, used by the publish rule."""
+        rows = await self._session.execute(
+            select(EventZone).join(EventSeat)
+            .where(EventZone.event_id == self._event.id)
+            .where(EventZone.deleted_at == None)
+        )
+
+        return EventLayoutInternal(
+            event=self._event,
+            zones=[
+                EventZoneWithSeatInternal(
+                    id=zone.id, name=zone.name, price=zone.price, seats=[
+                        EventSeatInternal(
+                            id=seat.id,
+                            row=seat.row,
+                            col=seat.col,
+                            status=seat.status,
+                            serial_number=seat.serial_number,
+                        )
+                        for seat in zone.seats()
+                    ]
+                )
+                for zone in rows.all()
+            ],
+        )
+
 
     async def order_stats(self) -> EventOrderStatsInternal:
         """Counts orders that are not soft-deleted, whatever their status."""
@@ -97,15 +126,13 @@ class EventAggregate:
         return EventOrderStatsInternal(active_order_count=total or 0)
 
     async def occupied_seat_count(self, event_zone_id: int) -> int:
-        """LOCKED / RESERVED seats in a zone, so a layout rewrite cannot drop
-        a seat somebody is holding."""
         await self._get_and_check_zone(event_zone_id)
         total = await self._session.scalar(
             select(func.count())
             .select_from(EventSeat)
             .where(EventSeat.event_zone_id == event_zone_id)
             .where(EventSeat.deleted_at == None)
-            .where(EventSeat.status.in_(OCCUPIED_SEAT_STATUSES))
+            .where(EventSeat.status == OCCUPIED_SEAT_STATUS)
         )
         return total or 0
 
@@ -162,8 +189,12 @@ class EventAggregate:
         self._event.end_at = payload.end_at
         await self._apply(self._event)
 
-    async def set_status(self, is_active: bool) -> None:
-        self._event.is_active = is_active
+    async def publish(self) -> None:
+        self._event.is_active = True
+        await self._apply(self._event)
+
+    async def unpublish(self) -> None:
+        self._event.is_active = False
         await self._apply(self._event)
 
     async def soft_delete(self) -> None:

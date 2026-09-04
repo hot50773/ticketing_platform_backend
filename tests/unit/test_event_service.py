@@ -6,21 +6,32 @@ the database, and that each use case enters the repository exactly once.
 from datetime import timedelta
 
 import pytest
+from redis import RedisError
 
-from app.exceptions import ActiveOrdersExistError, EventPublishedError, InvalidEventTimeError
+from app.exceptions import (
+    ActiveOrdersExistError,
+    EventPublishedError,
+    InvalidEventTimeError,
+    TicketPriceNotReadyError,
+)
 from app.libs.clock.functional import now_utc
-from app.schemas.event import EventCreate, EventHoldingTimeUpdate, EventStatusUpdate
+from app.schemas.event import EventCreate, EventHoldingTimeUpdate
 from app.services.event import EventService
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
-from tests.unit._fakes import START, FakeEventRepository
+from tests.unit._fakes import START, FakeEventLayoutCache, FakeEventRepository
 
 
-def a_service(repository: FakeEventRepository) -> EventService:
+def a_service(
+    repository: FakeEventRepository, cache: FakeEventLayoutCache | None = None
+) -> EventService:
+    """The cache shares the repository's `calls` list, so a test can assert on
+    where the Redis write lands among the database writes."""
     return EventService(
         event_repository=repository,
         event_rule_validator=EventRuleValidator(),
         event_schema_mapper=EventSchemaMapper(),
+        event_layout_cache=cache or FakeEventLayoutCache(repository.calls),
     )
 
 
@@ -92,17 +103,65 @@ async def test_unpublish_checks_orders_inside_the_locked_transaction():
     repo = FakeEventRepository(is_active=True, order_count=1)
 
     with pytest.raises(ActiveOrdersExistError):
-        await a_service(repo).update_event_status(1, EventStatusUpdate(is_active=False))
+        await a_service(repo).unpublish_event(1)
 
     assert repo.calls == ["load_for_update", "order_stats"]
 
 
 @pytest.mark.asyncio
 async def test_publish_checks_prices_not_orders():
+    """The two flows share no precondition: publishing never counts orders."""
     repo = FakeEventRepository()
-    await a_service(repo).update_event_status(1, EventStatusUpdate(is_active=True))
+    await a_service(repo).publish_event(1)
 
-    assert repo.calls == ["load_for_update", "zone_pricings", "set_status"]
+    assert repo.calls == ["load_for_update", "event_layout", "init_event_layouts", "publish"]
+
+
+@pytest.mark.asyncio
+async def test_publish_warms_the_bitmap_before_it_writes():
+    """The bitmap has to exist before is_active is committed, or the event goes
+    live for a moment with no seats in Redis."""
+    repo = FakeEventRepository()
+    cache = FakeEventLayoutCache(repo.calls)
+    await a_service(repo, cache).publish_event(1)
+
+    assert repo.calls.index("init_event_layouts") < repo.calls.index("publish")
+    assert [seat.serial_number for seat in cache.warmed[0].zones[0].seats] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_publish_does_not_write_when_the_cache_fails():
+    """A dead Redis must abort the publish: the transaction unwinds, so the
+    event stays unpublished rather than going live without a bitmap."""
+    repo = FakeEventRepository()
+    cache = FakeEventLayoutCache(repo.calls, fail=True)
+
+    with pytest.raises(RedisError):
+        await a_service(repo, cache).publish_event(1)
+
+    assert "publish" not in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_publish_does_not_warm_the_cache_for_an_unpriced_zone():
+    """The rule runs before Redis is touched, so a rejected publish leaves no
+    orphan bitmap behind."""
+    repo = FakeEventRepository(zone_price=None)
+
+    with pytest.raises(TicketPriceNotReadyError):
+        await a_service(repo).publish_event(1)
+
+    assert repo.calls == ["load_for_update", "event_layout"]
+
+
+@pytest.mark.asyncio
+async def test_unpublish_checks_orders_not_prices():
+    """...and unpublishing never looks at prices, so an unpriced zone that was
+    never published can still be taken off sale."""
+    repo = FakeEventRepository(is_active=True)
+    await a_service(repo).unpublish_event(1)
+
+    assert repo.calls == ["load_for_update", "order_stats", "unpublish"]
 
 
 @pytest.mark.asyncio

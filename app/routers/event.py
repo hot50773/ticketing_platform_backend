@@ -22,7 +22,6 @@ from app.schemas.event import (
     EventSeatLayoutSyncResponse,
     EventSeatLayoutUpdate,
     EventSeatResponse,
-    EventStatusUpdate,
     EventZoneCreate,
     EventZoneProfileUpdate,
     EventZoneResponse,
@@ -86,15 +85,24 @@ async def update_event_holding_time(
     return await event_service.update_event_holding_time(event_id, payload)
 
 
-@router.patch("/{event_id}/status", response_model=EventResponse, status_code=status.HTTP_200_OK)
+@router.post("/{event_id}/publish", response_model=EventResponse, status_code=status.HTTP_200_OK)
 @inject
-async def update_event_status(
+async def publish_event(
     event_id: int,
-    payload: EventStatusUpdate,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
-    """Publishes or unpublishes the event."""
-    return await event_service.update_event_status(event_id, payload)
+    """Puts the event on sale. Rejected while any zone is still unpriced."""
+    return await event_service.publish_event(event_id)
+
+
+@router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK)
+@inject
+async def unpublish_event(
+    event_id: int,
+    event_service: EventService = Depends(Provide[Container.event_service]),
+):
+    """Takes the event off sale. Rejected once any order exists."""
+    return await event_service.unpublish_event(event_id)
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)

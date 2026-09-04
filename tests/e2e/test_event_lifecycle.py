@@ -115,7 +115,7 @@ async def test_update_profile_allowed_after_publishing(
 ):
     event_id = seeded_event["event_id"]
     await price_every_zone(async_client, seeded_event)
-    assert (await async_client.patch(f"{API}/{event_id}/status", json={"is_active": True})).status_code == 200
+    assert (await async_client.post(f"{API}/{event_id}/publish")).status_code == 200
 
     resp = await async_client.patch(
         f"{API}/{event_id}/profile", json={"name": "Renamed Live", "description": "d"}
@@ -149,7 +149,7 @@ async def test_update_holding_time_rejected_after_publishing(
 ):
     event_id = seeded_event["event_id"]
     await price_every_zone(async_client, seeded_event)
-    await async_client.patch(f"{API}/{event_id}/status", json={"is_active": True})
+    await async_client.post(f"{API}/{event_id}/publish")
 
     start_at = now_utc() + timedelta(days=60)
     resp = await async_client.patch(
@@ -182,7 +182,7 @@ async def test_publish_requires_every_zone_priced(
     event_id = seeded_event["event_id"]
     await set_price(async_client, event_id, seeded_event["zone_ids"]["ZONE_A"], "ZONE_A", 1500)
 
-    resp = await async_client.patch(f"{API}/{event_id}/status", json={"is_active": True})
+    resp = await async_client.post(f"{API}/{event_id}/publish")
     assert resp.status_code == 409
     assert "ZONE_B" in resp.json()["detail"]
     assert "ZONE_A" not in resp.json()["detail"]
@@ -195,7 +195,7 @@ async def test_publish_succeeds_once_every_zone_is_priced(
     event_id = seeded_event["event_id"]
     await price_every_zone(async_client, seeded_event)
 
-    resp = await async_client.patch(f"{API}/{event_id}/status", json={"is_active": True})
+    resp = await async_client.post(f"{API}/{event_id}/publish")
     assert resp.status_code == 200
     assert resp.json()["is_active"] is True
 
@@ -213,7 +213,7 @@ async def test_publish_rejected_without_any_zone(
             session.add(zone)
         await session.commit()
 
-    resp = await async_client.patch(f"{API}/{event_id}/status", json={"is_active": True})
+    resp = await async_client.post(f"{API}/{event_id}/publish")
     assert resp.status_code == 409
     assert "no zone" in resp.json()["detail"]
 
@@ -224,11 +224,11 @@ async def test_unpublish_blocked_by_an_order(
 ):
     event_id = seeded_event["event_id"]
     await price_every_zone(async_client, seeded_event)
-    await async_client.patch(f"{API}/{event_id}/status", json={"is_active": True})
+    await async_client.post(f"{API}/{event_id}/publish")
 
     await place_order(event_id, seeded_event["user_id"])
 
-    resp = await async_client.patch(f"{API}/{event_id}/status", json={"is_active": False})
+    resp = await async_client.post(f"{API}/{event_id}/unpublish")
     assert resp.status_code == 409
     assert "order" in resp.json()["detail"]
 
@@ -241,7 +241,7 @@ async def test_cancelled_order_still_blocks(
     event_id = seeded_event["event_id"]
     await place_order(event_id, seeded_event["user_id"], status=OrderStatus.CANCELLED)
 
-    resp = await async_client.patch(f"{API}/{event_id}/status", json={"is_active": False})
+    resp = await async_client.post(f"{API}/{event_id}/unpublish")
     assert resp.status_code == 409
 
 
@@ -253,7 +253,7 @@ async def test_soft_deleted_order_does_not_block(
     event_id = seeded_event["event_id"]
     await place_order(event_id, seeded_event["user_id"], soft_deleted=True)
 
-    resp = await async_client.patch(f"{API}/{event_id}/status", json={"is_active": False})
+    resp = await async_client.post(f"{API}/{event_id}/unpublish")
     assert resp.status_code == 200
 
 

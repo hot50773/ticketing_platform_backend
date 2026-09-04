@@ -20,9 +20,9 @@ from app.schemas.event import (
     EventHoldingTime,
     EventOrderStatsInternal,
     EventStatusInternal,
-    EventZonePricingInternal,
+    EventZoneInternal,
+    EventZoneWithSeatInternal,
 )
-
 
 class EventRuleValidator:
     """Validates Event domain rules. Raises on violation, returns None on success."""
@@ -56,18 +56,20 @@ class EventRuleValidator:
                 f"this operation is only allowed while it is unpublished"
             )
 
-    def validate_publishable(self, zones: list[EventZonePricingInternal]) -> None:
+    @staticmethod
+    def validate_publishable(event_zones: list[EventZoneWithSeatInternal]) -> None:
         """An event goes live only with at least one zone, all of them priced."""
-        if not zones:
+        if not event_zones:
             raise EventHasNoZoneError("Cannot publish an event that has no zone")
 
-        unpriced = [zone.name for zone in zones if zone.price is None]
+        unpriced = [zone.name for zone in event_zones if zone.price is None]
         if unpriced:
             raise TicketPriceNotReadyError(
                 f"Ticket price is not set for zone(s): {', '.join(unpriced)}"
             )
 
-    def validate_no_occupied_seat(self, occupied_seat_count: int) -> None:
+    @staticmethod
+    def validate_no_occupied_seat(occupied_seat_count: int) -> None:
         """Guards a layout rewrite: a seat somebody is holding must not be
         dropped, even while the event is unpublished."""
         if occupied_seat_count > 0:

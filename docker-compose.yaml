@@ -21,4 +21,4 @@ services:
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - ~/docker_volumn/redis_autocomplete/redis:/data
+      - ~/docker_volumn/redis_autocomplete/redis_client:/data

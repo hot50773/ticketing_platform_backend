@@ -92,7 +92,7 @@ async def test_unpublish_cannot_miss_an_order_committed_mid_flight(
     async_client: AsyncClient, seeded_event: dict, in_flight_booking
 ):
     await assert_admin_call_waits_then_conflicts(
-        async_client.patch(f"{API}/{seeded_event['event_id']}/status", json={"is_active": False}),
+        async_client.post(f"{API}/{seeded_event['event_id']}/unpublish"),
         in_flight_booking,
     )
 

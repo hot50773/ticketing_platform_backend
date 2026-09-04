@@ -11,11 +11,13 @@ Boundaries:
   - ORM -> schema translation goes through EventSchemaMapper
   - the zone / seat layout lives in EventLayoutService, not here
   - nothing here touches Redis; warming the seat bitmap belongs to
-    update_event_status(publish), where the layout freezes and serial_number
-    becomes a stable offset
+    publish_event, where the layout freezes and serial_number becomes a
+    stable offset
 """
 import logging
 
+from app.cache.event_layout import EventLayoutCache
+from app.models import EventZone
 from app.repositories.event import EventRepository
 from app.schemas import Page, PaginationParams
 from app.schemas.event import (
@@ -24,7 +26,9 @@ from app.schemas.event import (
     EventHoldingTimeUpdate,
     EventProfileUpdate,
     EventResponse,
-    EventStatusUpdate,
+    EventZoneInternal,
+    EventLayoutInternal,
+    EventZoneWithSeatInternal,
 )
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
@@ -38,12 +42,14 @@ class EventService:
     def __init__(
         self,
         event_repository: EventRepository,
+        event_layout_cache: EventLayoutCache,
         event_rule_validator: EventRuleValidator,
         event_schema_mapper: EventSchemaMapper,
     ):
         self._repository = event_repository
         self._validator = event_rule_validator
         self._mapper = event_schema_mapper
+        self._cache = event_layout_cache
 
     async def create_event(self, payload: EventCreate) -> EventDetailResponse:
         """flow: validate holding time -> create event + clone venue layout.
@@ -86,18 +92,27 @@ class EventService:
             await event.set_holding_time(payload)
             return self._mapper.to_event(event.event)
 
-    async def update_event_status(
-        self, event_id: int, payload: EventStatusUpdate
-    ) -> EventResponse:
-        """flow: publish   -> assert every zone has a ticket price -> update
-                 unpublish -> assert no live order                 -> update
+    async def publish_event(self, event_id: int) -> EventResponse:
+        """flow: assert every zone exists and is priced -> put on sale.
+
+        Publishing and unpublishing share nothing but the column they write:
+        different preconditions, different failure modes, and publishing is
+        where the layout freezes. They are therefore separate use cases.
         """
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            event_layout = await event_aggr.event_layout()
+            self._validator.validate_publishable(event_layout.zones)
+
+            await self._cache.init_event_layouts(event_layout)
+            await event_aggr.publish()
+
+            return self._mapper.to_event(event_aggr.event)
+
+    async def unpublish_event(self, event_id: int) -> EventResponse:
+        """flow: assert no live order -> take off sale."""
         async with self._repository.load_for_update(event_id) as event:
-            if payload.is_active:
-                self._validator.validate_publishable(await event.zone_pricings())
-            else:
-                self._validator.validate_no_live_order(await event.order_stats())
-            await event.set_status(payload.is_active)
+            self._validator.validate_no_live_order(await event.order_stats())
+            await event.unpublish()
             return self._mapper.to_event(event.event)
 
     async def delete_event(self, event_id: int) -> None:

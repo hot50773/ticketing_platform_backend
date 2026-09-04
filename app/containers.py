@@ -1,4 +1,6 @@
 from dependency_injector import containers, providers
+
+from app.cache.event_layout import EventLayoutCache
 from app.config import settings
 from app.db.postgres import Database
 from app.db.redis import RedisClient
@@ -44,6 +46,9 @@ class Container(containers.DeclarativeContainer):
         session_factory=async_session_factory
     )
 
+    # Cache
+    event_layout_cache = providers.Factory(EventLayoutCache, redis_client=redis_client)
+
     # Domain rule validators (pure, no I/O)
     event_rule_validator = providers.Factory(EventRuleValidator)
 
@@ -60,7 +65,8 @@ class Container(containers.DeclarativeContainer):
         EventService,
         event_repository=event_repository,
         event_rule_validator=event_rule_validator,
-        event_schema_mapper=event_schema_mapper
+        event_schema_mapper=event_schema_mapper,
+        event_layout_cache=event_layout_cache
     )
 
     event_layout_service = providers.Factory(

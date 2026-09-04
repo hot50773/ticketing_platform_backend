@@ -128,15 +128,14 @@ class EventRepository:
     async def _clone_zones(session: AsyncSession, event_id: int, venue_id: int) -> None:
         """Copies the venue's live zones. price stays NULL (not configured yet)."""
         source = (
-            select(func.now(), func.now(), literal(event_id), Zone.name, Zone.id)
+            select(literal(event_id), Zone.name, Zone.id)
             .where(Zone.venue_id == venue_id)
             .where(Zone.deleted_at == None)
         )
         await session.execute(
             insert(EventZone).from_select(
-                ["created_at", "updated_at", "event_id", "name", "source_zone_id"],
+                ["event_id", "name", "source_zone_id"],
                 source,
-                include_defaults=False,
             )
         )
 
@@ -146,8 +145,6 @@ class EventRepository:
         joining freshly inserted event_zone rows back to their source zone."""
         source = (
             select(
-                func.now(),
-                func.now(),
                 EventZone.id,
                 Seat.row,
                 Seat.col,
@@ -164,8 +161,6 @@ class EventRepository:
         await session.execute(
             insert(EventSeat).from_select(
                 [
-                    "created_at",
-                    "updated_at",
                     "event_zone_id",
                     "row",
                     "col",
@@ -174,6 +169,5 @@ class EventRepository:
                     "source_seat_id",
                 ],
                 source,
-                include_defaults=False,
             )
         )

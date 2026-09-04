@@ -18,7 +18,7 @@ from app.schemas.event import (
     EventHoldingTime,
     EventOrderStatsInternal,
     EventStatusInternal,
-    EventZonePricingInternal,
+    EventZoneInternal,
 )
 from app.services.validators import EventRuleValidator
 
@@ -30,8 +30,8 @@ def validator() -> EventRuleValidator:
     return EventRuleValidator(clock=lambda: NOW)
 
 
-def zone(name: str, price: int | None) -> EventZonePricingInternal:
-    return EventZonePricingInternal(id=1, name=name, price=price)
+def zone(name: str, price: int | None) -> EventZoneInternal:
+    return EventZoneInternal(id=1, name=name, price=price)
 
 
 def holding_time(start_at, end_at) -> EventHoldingTime:

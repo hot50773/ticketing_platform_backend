@@ -1,21 +1,28 @@
-"""Fake aggregate and repository for service-level unit tests.
+"""Fake aggregate, repository and layout cache for service-level unit tests.
 
-Both share one `calls` list, so a test can assert on the exact sequence of
-things a use case did - including what it did *not* do after a rule failed.
+All three share one `calls` list, so a test can assert on the exact sequence of
+things a use case did - including what it did *not* do after a rule failed, and
+how a Redis write interleaves with the database writes around it.
 """
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
+from redis import RedisError
+
 from app.libs.clock.functional import now_utc
 from app.models import Event, EventZone
 from app.schemas import Page
+from app.enums import SeatStatus
 from app.schemas.event import (
+    EventLayoutInternal,
     EventLayoutSummaryInternal,
     EventOrderStatsInternal,
+    EventSeatInternal,
     EventSeatSyncCountsInternal,
     EventStatusInternal,
-    EventZonePricingInternal,
+    EventZoneInternal,
     EventZoneWithSeatCountInternal,
+    EventZoneWithSeatInternal,
 )
 
 START = now_utc() + timedelta(days=30)
@@ -41,12 +48,33 @@ def a_zone(name: str = "A", price: int | None = None) -> EventZone:
     )
 
 
+def a_zone_with_seats(name: str = "A", price: int | None = 1500) -> EventZoneWithSeatInternal:
+    """A priced zone with two seats, so publish_event has a layout to warm."""
+    return EventZoneWithSeatInternal(
+        id=10,
+        name=name,
+        price=price,
+        seats=[
+            EventSeatInternal(id=100, serial_number=1, row=1, col=1, status=SeatStatus.AVAILABLE),
+            EventSeatInternal(id=101, serial_number=2, row=1, col=2, status=SeatStatus.AVAILABLE),
+        ],
+    )
+
+
 class FakeAggregate:
-    def __init__(self, calls: list[str], event: Event, order_count: int, occupied: int):
+    def __init__(
+        self,
+        calls: list[str],
+        event: Event,
+        order_count: int,
+        occupied: int,
+        zone_price: int | None = 1500,
+    ):
         self.calls = calls
         self._event = event
         self._order_count = order_count
         self._occupied = occupied
+        self._zone_price = zone_price
 
     @property
     def event(self) -> Event:
@@ -63,9 +91,16 @@ class FakeAggregate:
             zones=[EventZoneWithSeatCountInternal(zone=a_zone(), seat_count=4)],
         )
 
-    async def zone_pricings(self) -> list[EventZonePricingInternal]:
+    async def event_layout(self) -> EventLayoutInternal:
+        """The full layout, seats included - what publish_event hands the cache."""
+        self.calls.append("event_layout")
+        return EventLayoutInternal(
+            event=self._event, zones=[a_zone_with_seats(price=self._zone_price)]
+        )
+
+    async def zone_pricings(self) -> list[EventZoneInternal]:
         self.calls.append("zone_pricings")
-        return [EventZonePricingInternal(id=10, name="A", price=1500)]
+        return [EventZoneInternal(id=10, name="A", price=self._zone_price)]
 
     async def order_stats(self) -> EventOrderStatsInternal:
         self.calls.append("order_stats")
@@ -85,8 +120,11 @@ class FakeAggregate:
     async def set_holding_time(self, payload) -> None:
         self.calls.append("set_holding_time")
 
-    async def set_status(self, is_active: bool) -> None:
-        self.calls.append("set_status")
+    async def publish(self) -> None:
+        self.calls.append("publish")
+
+    async def unpublish(self) -> None:
+        self.calls.append("unpublish")
 
     async def soft_delete(self) -> None:
         self.calls.append("soft_delete")
@@ -111,9 +149,17 @@ class FakeAggregate:
 class FakeEventRepository:
     """Hands out a FakeAggregate through the same context-manager API."""
 
-    def __init__(self, is_active: bool = False, order_count: int = 0, occupied: int = 0):
+    def __init__(
+        self,
+        is_active: bool = False,
+        order_count: int = 0,
+        occupied: int = 0,
+        zone_price: int | None = 1500,
+    ):
         self.calls: list[str] = []
-        self.aggregate = FakeAggregate(self.calls, an_event(is_active), order_count, occupied)
+        self.aggregate = FakeAggregate(
+            self.calls, an_event(is_active), order_count, occupied, zone_price
+        )
 
     @asynccontextmanager
     async def load(self, event_id: int):
@@ -129,3 +175,27 @@ class FakeEventRepository:
     async def create(self, payload):
         self.calls.append("create")
         yield self.aggregate
+
+
+class FakeEventLayoutCache:
+    """Records the Redis warm-up instead of performing it.
+
+    Takes the repository's `calls` list so a test can see where the cache write
+    lands relative to the database writes - the ordering is the whole point of
+    warming the bitmap before the publish commits.
+
+    `fail=True` makes the write raise, which is how a test pins down that a
+    cache failure aborts the publish rather than leaving a live event with no
+    bitmap behind it.
+    """
+
+    def __init__(self, calls: list[str], fail: bool = False):
+        self.calls = calls
+        self._fail = fail
+        self.warmed: list[EventLayoutInternal] = []
+
+    async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
+        self.calls.append("init_event_layouts")
+        if self._fail:
+            raise RedisError("fake redis is down")
+        self.warmed.append(event_layout)

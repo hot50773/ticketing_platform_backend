@@ -18,7 +18,7 @@ async def publish(client: AsyncClient, seeded_event: dict):
             f"{API}/{event_id}/event_zones/{zone_id}/profile",
             json={"name": name, "price": 1500},
         )
-    resp = await client.patch(f"{API}/{event_id}/status", json={"is_active": True})
+    resp = await client.post(f"{API}/{event_id}/publish")
     assert resp.status_code == 200, resp.text
 
 
@@ -239,7 +239,7 @@ async def test_layout_sync_rejected_when_a_seat_is_held(
                 select(EventSeat).where(EventSeat.event_zone_id == zone_id).limit(1)
             )
         ).scalars().one()
-        seat.status = SeatStatus.LOCKED
+        seat.status = SeatStatus.RESERVED
         session.add(seat)
         await session.commit()
 

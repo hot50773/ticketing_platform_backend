@@ -59,11 +59,6 @@ class EventHoldingTimeUpdate(EventHoldingTime):
     pass
 
 
-class EventStatusUpdate(SQLModel):
-    """PATCH /events/{event_id}/status."""
-    is_active: bool
-
-
 # --------------------------------------------------------------------------- #
 # Requests - EventZone / EventSeat
 # --------------------------------------------------------------------------- #
@@ -139,7 +134,7 @@ class EventZoneResponse(_TableMetaMixin, SQLModel):
     seat_count: int
 
 
-class EventResponse(_TableMetaMixin, SQLModel):
+class EventResponse(SQLModel, _TableMetaMixin):
     name: str
     description: str
     start_at: datetime
@@ -180,7 +175,7 @@ class EventZoneWithSeatCountInternal(SQLModel):
     seat_count: int
 
 class EventSeatInternal(SQLModel):
-    event_zone_id: int
+    id: int
     serial_number: int
     row: int
     col: int
@@ -210,7 +205,7 @@ class EventStatusInternal(SQLModel):
     is_active: bool
 
 
-class EventZonePricingInternal(SQLModel):
+class EventZoneInternal(SQLModel):
     """Price projection used by the publish rule."""
     id: int
     name: str

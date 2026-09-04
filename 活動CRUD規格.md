@@ -23,17 +23,17 @@
    - validations -> 
      - started_at: 要大於現在
      - ended_at: 要晚於 started_at
-3. 上架 / 下架
+3. 上架 / 下架（2026-09-04 更正：兩者流程完全不同，拆成獨立 API）
    - 下架規則：已有訂單的活動不可下架
    - 上架規則：票價尚未設定完成，不可上架
 ## API
 - update_event_profile PATCH /events/:id/profile
 - update_event_time PATCH /events/:id/holding_time
   - flow: validate started_time and ended_time -> update_event_time
-- update_event_status PATCH /events/:id/status
-  - flow: 
-    - 上架：validate all ticket_price is set -> update_event_status
-    - 下架：validate no active order -> update_event_status
+- publish_event POST /events/:id/publish
+  - flow: validate 至少一個分區且 all ticket_price is set -> publish
+- unpublish_event POST /events/:id/unpublish
+  - flow: validate no active order -> unpublish
 
 # 更新活動的場地座位
 - precondition: 已上架的活動不可編輯場地的分區、座位；分區的 name 和 price 上架後仍可更新（2026-09-02 更正）
