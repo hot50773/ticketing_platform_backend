@@ -230,7 +230,7 @@ async def test_layout_sync_rejected_after_publishing(
 async def test_layout_sync_rejected_when_a_seat_is_held(
     async_client: AsyncClient, container: Container, seeded_event: dict
 ):
-    """Even while unpublished, a LOCKED or RESERVED seat must not be dropped."""
+    """Even while unpublished, a RESERVED seat must not be dropped."""
     zone_id = seeded_event["zone_ids"]["ZONE_A"]
     db = container.db()
     async with db.get_async_session() as session:

@@ -3,9 +3,12 @@ import enum
 
 class SeatStatus(enum.StrEnum):
     """
-    AVAILABLE -> LOCKED -> RESERVED
-    LOCKED -> AVAILABLE
+    AVAILABLE -> RESERVED
     RESERVED -> AVAILABLE
+
+    暫時鎖定（購物車保留中）不再是一個 DB 狀態：那是 Redis bitmap 的職責，
+    寫進資料庫只會讓兩邊各有一份會漂移的真相。若要改回來，除了打開下面那行
+    還得再寫一支 migration 把 LOCKED 加回 seatstatus enum。
     """
     AVAILABLE = "AVAILABLE" # 可預訂
     # LOCKED = "LOCKED" # 暫時鎖定

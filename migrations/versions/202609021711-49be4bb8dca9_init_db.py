@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     order_status_enum = sa.Enum("PENDING", "CANCELLED", "CONFIRMED", name="orderstatus")
-    seat_status_enum = sa.Enum("AVAILABLE", "LOCKED", "RESERVED", name="seatstatus")
+    seat_status_enum = sa.Enum("AVAILABLE", "RESERVED", name="seatstatus")
     payment_status_enum = sa.Enum("PENDING", "SUCCESS", "FAILED", name="paymentstatus")
     op.create_table(
         "user",
