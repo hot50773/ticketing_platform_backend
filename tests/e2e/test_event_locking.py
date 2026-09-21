@@ -14,14 +14,18 @@ Every test cleans up its session and its pending task in a finally / teardown:
 a leaked row lock would hang the next test's TRUNCATE rather than fail it.
 """
 import asyncio
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.containers import Container
 from app.enums import OrderStatus, PaymentStatus
 from app.models import Event, Order
+from app.schemas import PaginationParams
+from app.schemas.event import EventProfileUpdate
 
 API = "/api/v1/events"
 SETTLE = 0.3  # long enough for the admin request to reach the lock and queue
@@ -116,3 +120,67 @@ async def test_reads_never_queue_behind_a_writer(
     finally:
         await session.rollback()
         await session.__aexit__(None, None, None)
+
+
+# --------------------------------------------------------------------------- #
+# Explicit unwinding
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_failed_use_case_rolls_back_explicitly(
+    container: Container, seeded_event: dict
+):
+    """The repository must roll back itself, not leave it to the pool.
+
+    Closing the session would unwind the transaction anyway - reset_on_return
+    defaults to "rollback" - but that is an engine default three layers away.
+    Spying on rollback() is the only way to tell the two apart, and without
+    this test the guarantee is a comment rather than a behaviour.
+    """
+    calls = []
+    original = AsyncSession.rollback
+
+    async def spy(self):
+        calls.append(1)
+        return await original(self)
+
+    repo = container.event_repository()
+
+    with patch.object(AsyncSession, "rollback", spy):
+        with pytest.raises(RuntimeError, match="use case blew up"):
+            async with repo.load_for_update(seeded_event["event_id"]) as event:
+                await event.update_profile(
+                    EventProfileUpdate(name="MUST_NOT_PERSIST", description="x")
+                )
+                raise RuntimeError("use case blew up")
+
+    assert calls, "load_for_update swallowed the failure without rolling back"
+
+    fresh = (await repo.get_events(PaginationParams(limit=10, offset=0))).items
+    assert [e.name for e in fresh] == ["World Tour 2026"]
+
+
+@pytest.mark.asyncio
+async def test_failed_use_case_releases_the_row_lock(
+    container: Container, seeded_event: dict
+):
+    """A rollback that did not reach the database would leave FOR UPDATE held
+    and deadlock the next writer, so assert the lock is actually gone."""
+    repo = container.event_repository()
+
+    with pytest.raises(RuntimeError):
+        async with repo.load_for_update(seeded_event["event_id"]):
+            raise RuntimeError("boom")
+
+    session = container.db().get_async_session()
+    try:
+        await asyncio.wait_for(
+            session.execute(
+                select(Event)
+                .where(Event.id == seeded_event["event_id"])
+                .with_for_update()
+            ),
+            timeout=3.0,
+        )
+    finally:
+        await session.rollback()
+        await session.close()

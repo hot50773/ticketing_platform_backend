@@ -39,24 +39,45 @@ class EventRepository:
     # ----------------------------------------------------------------------- #
     @asynccontextmanager
     async def load(self, event_id: int) -> AsyncIterator[EventAggregate]:
-        """Read-only access. Takes no row lock."""
+        """Read-only access. Takes no row lock.
+
+        The rollback is belt-and-braces on a read path - there should be
+        nothing pending to undo. It is here so all three entry points unwind
+        the same way, and so a write accidentally issued through `load()` is
+        discarded loudly rather than left to the pool.
+        """
         async with self.session_factory() as session:
-            event = await self._get_and_check_event(session, event_id)
-            yield EventAggregate(session, event)
+            try:
+                yield EventAggregate(session, await self._get_and_check_event(session, event_id))
+            except BaseException:
+                await session.rollback()
+                raise
 
     @asynccontextmanager
     async def load_for_update(self, event_id: int) -> AsyncIterator[EventAggregate]:
-        """Write access. Locks the event row with `FOR UPDATE` and commits on
-        a clean exit; any exception leaves the transaction to roll back.
+        """Write access. Locks the event row with `FOR UPDATE`, commits on a
+        clean exit and rolls back explicitly on any exception.
+
+        The rollback is not redundant. Closing the session would return the
+        connection to a pool whose reset_on_return is "rollback", so the
+        transaction would unwind anyway - but that guarantee lives three
+        layers away in engine defaults. Stated here, it survives someone
+        swapping the pool config, and it releases the FOR UPDATE lock at a
+        point this code controls rather than whenever the pool gets around
+        to recycling the connection.
 
         The lock is what actually closes the check-then-write race: one
         transaction alone would still let a concurrent order slip in between
         counting and updating under READ COMMITTED.
         """
         async with self.session_factory() as session:
-            event = await self._get_and_check_event(session, event_id, for_update=True)
-            yield EventAggregate(session, event)
-            await session.commit()
+            try:
+                event = await self._get_and_check_event(session, event_id, for_update=True)
+                yield EventAggregate(session, event)
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
 
     @asynccontextmanager
     async def create(self, payload: EventCreate) -> AsyncIterator[EventAggregate]:
@@ -71,26 +92,30 @@ class EventRepository:
         Raises EntityNotFoundError when the venue does not exist or is deleted.
         """
         async with self.session_factory() as session:
-            await self._check_venue(session, payload.venue_id)
+            try:
+                await self._check_venue(session, payload.venue_id)
 
-            event = Event(
-                name=payload.name,
-                description=payload.description,
-                start_at=payload.start_at,
-                end_at=payload.end_at,
-                is_active=False,
-                venue_id=payload.venue_id,
-            )
-            session.add(event)
-            await session.flush()
+                event = Event(
+                    name=payload.name,
+                    description=payload.description,
+                    start_at=payload.start_at,
+                    end_at=payload.end_at,
+                    is_active=False,
+                    venue_id=payload.venue_id,
+                )
+                session.add(event)
+                await session.flush()
 
-            await self._clone_zones(session, event.id, payload.venue_id)
-            await self._clone_seats(session, event.id)
-            await session.flush()
-            await session.refresh(event)
+                await self._clone_zones(session, event.id, payload.venue_id)
+                await self._clone_seats(session, event.id)
+                await session.flush()
+                await session.refresh(event)
 
-            yield EventAggregate(session, event)
-            await session.commit()
+                yield EventAggregate(session, event)
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
 
     # ----------------------------------------------------------------------- #
     # Collection queries
