@@ -129,17 +129,20 @@ class EventAggregate:
         return EventLayoutInternal(event=self._event, zones=list(zones.values()))
 
     async def zone_ids(self) -> list[int]:
-        """Live zone ids only - what the cache needs to build its keys.
+        """Live zone ids - what the cache needs to build its keys.
 
-        Deliberately not `event_layout()`: the caller only wants keys, and a
-        10k-seat event should not drag every seat through Python to get them.
+        Deliberately not `event_layout()`: that one joins in every seat, and a
+        10k-seat event should not drag all of them through Python just to
+        produce a handful of Redis keys. Zones alone are cheap.
         """
-        rows = await self._session.execute(
-            select(EventZone.id)
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
-        )
-        return list(rows.scalars().all())
+        zones = (
+            await self._session.execute(
+                select(EventZone)
+                .where(EventZone.event_id == self._event.id)
+                .where(EventZone.deleted_at == None)
+            )
+        ).scalars().all()
+        return [zone.id for zone in zones]
 
     async def order_stats(self) -> EventOrderStatsInternal:
         """Counts orders that are not soft-deleted, whatever their status."""

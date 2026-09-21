@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_column_queries.py\"",
+            "statusMessage": "檢查 ORM 欄位級別查詢",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
