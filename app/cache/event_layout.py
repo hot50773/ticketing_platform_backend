@@ -1,7 +1,12 @@
 """Redis bitmaps derived from a frozen event layout.
 
 Written at publish time, when the zone/seat layout can no longer change and
-`serial_number` is therefore a stable bit offset.
+`serial_number` is therefore a stable bit offset (0-based, so the column value
+is the bit position outright).
+
+Only the existence bitmap is rebuilt on publish. The sold bitmap is deliberately
+left alone: publishing an already-published event is not rejected today, and
+wiping sold seats out from under a live event would be unrecoverable.
 
 The bitmaps are derived data, never a source of truth: everything here can be
 rebuilt from Postgres. What must never happen is a *partially* written bitmap,
@@ -68,19 +73,54 @@ class EventLayoutCache:
         `.execute()` is what renders them into a BITFIELD command and queues it
         on the pipeline. Miss that call and the pipeline goes out empty.
         """
+        key = self.SEAT_EXISTENCE_BITMAP_KEY.format(event_id=event_id, zone_id=zone.id)
+
+        # DEL first, in the same MULTI as the rebuild: BITFIELD only ever sets
+        # bits, so writing over a previous generation of the bitmap would leave
+        # a retired seat's bit standing and resurrect a seat that no longer
+        # exists. Seats can be soft-deleted and re-added for as long as the
+        # event stays unpublished, so this is a live hazard, not a hypothetical.
+        pipeline.delete(key)
         if not zone.seats:
             return
 
-        key = self.SEAT_EXISTENCE_BITMAP_KEY.format(event_id=event_id, zone_id=zone.id)
         bitfield = pipeline.bitfield(key)
         for seat in zone.seats:
-            self._mark_seat_existence(bitfield=bitfield, offset=seat.serial_number - 1)
+            self._mark_seat_existence(bitfield=bitfield, offset=seat.serial_number)
         bitfield.execute()
+
+    async def clear_event_layouts(self, event_id: int, zone_ids: list[int]) -> None:
+        """Drops every bitmap belonging to an event.
+
+        Called *after* the unpublish / delete has committed, which is the
+        mirror image of the publish ordering and for the same reason: dropping
+        a live event's bitmap would make every seat read as non-existent, while
+        a bitmap left behind on an event that is no longer on sale is inert and
+        gets rebuilt from scratch by the next publish.
+        """
+        if not zone_ids:
+            return
+
+        try:
+            async with self._redis_client.pipeline() as pipeline:
+                for zone_id in zone_ids:
+                    pipeline.delete(
+                        self.SEAT_EXISTENCE_BITMAP_KEY.format(
+                            event_id=event_id, zone_id=zone_id
+                        ),
+                        self.SEAT_SOLD_BITMAP_KEY.format(
+                            event_id=event_id, zone_id=zone_id
+                        ),
+                    )
+                await pipeline.execute()
+        except RedisError:
+            logger.exception("Failed to clear seat bitmaps for event %s", event_id)
+            raise
 
     @staticmethod
     def _mark_seat_existence(bitfield, offset: int):
-        """offset = serial_number - 1, per the contract in app/schemas/event.py.
-        TODO: the -1 disappears once serial_number is migrated to 0-based.
+        """serial_number is the bit offset outright - it is 0-based since the
+        7c4e91ab2d38 migration, so there is no arithmetic here to get wrong.
 
         `.value` is not decoration: redis-py encodes ints with `repr()`, which
         turns a bare IntEnum member into `<RedisSeatExistence.EXIST: 1>` and

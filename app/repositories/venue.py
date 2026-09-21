@@ -187,7 +187,8 @@ class VenueRepository:
         return zone
 
     async def create_seat(self, zone_id: int, seat_data: SeatCreate) -> Seat:
-        """Appends one seat to a zone, numbered max(serial_number) + 1."""
+        """Appends one seat to a zone, numbered max(serial_number) + 1
+        (0 for the zone's first seat)."""
         async with self.session_factory() as session:
             next_serial = await self._next_serial_number(session, zone_id)
             seat = Seat(
@@ -209,16 +210,19 @@ class VenueRepository:
 
     @staticmethod
     async def _next_serial_number(session: AsyncSession, zone_id: int) -> int:
-        """Next serial number in a zone.
+        """Next serial number in a zone, or 0 for a zone with no seats yet.
 
         Deliberately counts soft-deleted rows so a number is never recycled:
         Seat.serial_number is a durable physical label. (The partial index
         would permit reuse; we choose not to.)
+
+        Not `(current_max or 0) + 1`: numbering is 0-based, so seat number 0
+        has a falsy max and would be mistaken for an empty zone.
         """
         current_max = await session.scalar(
             select(func.max(Seat.serial_number)).where(Seat.zone_id == zone_id)
         )
-        return (current_max or 0) + 1
+        return 0 if current_max is None else current_max + 1
 
     async def create_seats_batch(
         self, zone_id: int, seats_data: list[SeatCreate]

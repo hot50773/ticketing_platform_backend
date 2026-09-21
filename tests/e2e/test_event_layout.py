@@ -150,12 +150,12 @@ async def test_layout_sync_adds_and_removes_without_renumbering(
     async_client: AsyncClient, container: Container, seeded_event: dict
 ):
     """The core rule: survivors keep their serial_number, and a retired number
-    is never recycled - the new seat gets max + 1, not the freed 2."""
+    is never recycled - the new seat gets max + 1, not the freed 1."""
     event_id = seeded_event["event_id"]
     zone_id = seeded_event["zone_ids"]["ZONE_A"]
 
     before = await read_seats(container, zone_id)
-    assert [(s.serial_number, s.row, s.col) for s in before] == [(1, 1, 1), (2, 1, 2)]
+    assert [(s.serial_number, s.row, s.col) for s in before] == [(0, 1, 1), (1, 1, 2)]
 
     resp = await async_client.patch(
         f"{API}/{event_id}/event_zones/{zone_id}/seats",
@@ -165,7 +165,7 @@ async def test_layout_sync_adds_and_removes_without_renumbering(
     assert resp.json() == {"created_count": 1, "deleted_count": 1, "seat_count": 2}
 
     after = await read_seats(container, zone_id)
-    assert [(s.serial_number, s.row, s.col) for s in after] == [(1, 1, 1), (3, 1, 3)]
+    assert [(s.serial_number, s.row, s.col) for s in after] == [(0, 1, 1), (2, 1, 3)]
 
 
 @pytest.mark.asyncio
@@ -183,7 +183,7 @@ async def test_layout_sync_is_idempotent(
     assert resp.json() == {"created_count": 0, "deleted_count": 0, "seat_count": 2}
 
     after = await read_seats(container, zone_id)
-    assert [s.serial_number for s in after] == [1, 2]
+    assert [s.serial_number for s in after] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -269,4 +269,4 @@ async def test_deleted_seat_position_can_be_reused_with_a_new_number(
     )
 
     after = await read_seats(container, zone_id)
-    assert [(s.serial_number, s.row, s.col) for s in after] == [(1, 1, 1), (3, 1, 2)]
+    assert [(s.serial_number, s.row, s.col) for s in after] == [(0, 1, 1), (2, 1, 2)]

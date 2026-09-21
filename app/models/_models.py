@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, text
+from sqlalchemy import CheckConstraint, DateTime, Index, text
 from sqlmodel import Field
 
 from app.enums import SeatStatus, OrderStatus, PaymentStatus
@@ -43,6 +43,7 @@ class Zone(SoftDeletable, TableBase, table=True):
 
 class Seat(SoftDeletable, TableBase, table=True):
     __tablename__ = "seat"
+    # 0-based: this IS the Redis bitmap bit position, no arithmetic in between.
     serial_number: int
     row: int
     col: int
@@ -51,6 +52,7 @@ class Seat(SoftDeletable, TableBase, table=True):
     # (zone_id, serial_number) rather than the reverse: zone_id is the useful prefix
     __table_args__ = (
         Index("uq_seat_zone", "zone_id", "serial_number", unique=True, postgresql_where=SOFT_DELETE_ACTIVE),
+        CheckConstraint("serial_number >= 0", name="ck_seat_serial_number_non_negative"),
         {"comment": "座位"},
     )
 
@@ -110,6 +112,9 @@ class EventSeat(SoftDeletable, TableBase, table=True):
             "serial_number",
             unique=True,
             postgresql_where=SOFT_DELETE_ACTIVE,
+        ),
+        CheckConstraint(
+            "serial_number >= 0", name="ck_event_seat_serial_number_non_negative"
         ),
         {"comment": "活動的座位表"},
     )

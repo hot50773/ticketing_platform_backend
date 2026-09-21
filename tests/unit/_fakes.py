@@ -55,8 +55,8 @@ def a_zone_with_seats(name: str = "A", price: int | None = 1500) -> EventZoneWit
         name=name,
         price=price,
         seats=[
-            EventSeatInternal(id=100, serial_number=1, row=1, col=1, status=SeatStatus.AVAILABLE),
-            EventSeatInternal(id=101, serial_number=2, row=1, col=2, status=SeatStatus.AVAILABLE),
+            EventSeatInternal(id=100, serial_number=0, row=1, col=1, status=SeatStatus.AVAILABLE),
+            EventSeatInternal(id=101, serial_number=1, row=1, col=2, status=SeatStatus.AVAILABLE),
         ],
     )
 
@@ -101,6 +101,10 @@ class FakeAggregate:
     async def zone_pricings(self) -> list[EventZoneInternal]:
         self.calls.append("zone_pricings")
         return [EventZoneInternal(id=10, name="A", price=self._zone_price)]
+
+    async def zone_ids(self) -> list[int]:
+        self.calls.append("zone_ids")
+        return [10]
 
     async def order_stats(self) -> EventOrderStatsInternal:
         self.calls.append("order_stats")
@@ -193,9 +197,16 @@ class FakeEventLayoutCache:
         self.calls = calls
         self._fail = fail
         self.warmed: list[EventLayoutInternal] = []
+        self.cleared: list[tuple[int, list[int]]] = []
 
     async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
         self.calls.append("init_event_layouts")
         if self._fail:
             raise RedisError("fake redis is down")
         self.warmed.append(event_layout)
+
+    async def clear_event_layouts(self, event_id: int, zone_ids: list[int]) -> None:
+        self.calls.append("clear_event_layouts")
+        if self._fail:
+            raise RedisError("fake redis is down")
+        self.cleared.append((event_id, zone_ids))

@@ -40,13 +40,14 @@ async def test_venue_zone_seat_crd_flow(async_client: AsyncClient):
     )
     assert seat_resp.status_code == 201
     assert seat_resp.json()["zone_id"] == zone_id
-    # serial_number is assigned by the backend, starting at 1 per zone
-    assert seat_resp.json()["serial_number"] == 1
+    # serial_number is assigned by the backend, starting at 0 per zone -
+    # the value is the Redis bitmap bit position, so it cannot start at 1
+    assert seat_resp.json()["serial_number"] == 0
 
     second = await async_client.post(
         f"/api/v1/zones/{zone_id}/seats", json={"row": 1, "col": 2}
     )
-    assert second.json()["serial_number"] == 2
+    assert second.json()["serial_number"] == 1
 
 
 @pytest.mark.asyncio
@@ -87,8 +88,8 @@ async def test_create_seats_batch(async_client: AsyncClient, seeded_venue_and_se
     )
     assert resp.status_code == 201
     created = resp.json()
-    # zone_a already holds seats 1 and 2, so the batch continues from 3
-    assert [s["serial_number"] for s in created] == [3, 4]
+    # zone_a already holds seats 0 and 1, so the batch continues from 2
+    assert [s["serial_number"] for s in created] == [2, 3]
     assert all(s["zone_id"] == zone_id for s in created)
 
 
@@ -103,7 +104,7 @@ async def test_client_supplied_serial_number_is_ignored(
         json={"row": 9, "col": 9, "serial_number": 999},
     )
     assert resp.status_code == 201
-    assert resp.json()["serial_number"] == 3
+    assert resp.json()["serial_number"] == 2
 
 
 @pytest.mark.asyncio
@@ -184,4 +185,4 @@ async def test_zone_and_seat_list_pagination(
 
     seats = (await async_client.get(f"/api/v1/zones/{zone_id}/seats?limit=1&offset=1")).json()
     assert seats["total"] == 2 and len(seats["items"]) == 1
-    assert seats["items"][0]["serial_number"] == 2
+    assert seats["items"][0]["serial_number"] == 1

@@ -65,13 +65,13 @@ class EventHoldingTimeUpdate(EventHoldingTime):
 class EventSeatLayout(SQLModel):
     """One seat position inside a zone layout payload.
 
-    `serial_number` is NOT accepted: it is the seat's Redis bitmap offset
-    (offset = serial_number - 1) and stays backend-owned. `(row, col)` is
-    therefore the key the client identifies a seat by.
+    `serial_number` is NOT accepted: it *is* the seat's Redis bitmap bit
+    offset - 0-based, no arithmetic in between - and stays backend-owned.
+    `(row, col)` is therefore the key the client identifies a seat by.
 
     Numbers are unique per zone but NOT contiguous - soft-deleting a seat
     leaves a hole, and holes are never reclaimed. A Redis bitmap for a zone
-    must therefore be sized by max(serial_number), not by the seat count.
+    must therefore be sized by max(serial_number) + 1, not by the seat count.
     """
     row: int = Field(ge=1)
     col: int = Field(ge=1)
@@ -118,8 +118,8 @@ class EventSeatLayoutUpdate(SQLModel):
 
     Surviving seats keep their serial_number: the layout is never renumbered,
     so a Redis offset can only ever be added or retired, never reassigned to a
-    different seat. New seats take max(serial_number) + 1, counting
-    soft-deleted rows so a retired offset is never recycled.
+    different seat. New seats take max(serial_number) + 1 (0 in an empty
+    zone), counting soft-deleted rows so a retired offset is never recycled.
     """
     seats: SeatLayout
 

@@ -76,10 +76,10 @@ async def seeded_venue_and_seats(container: Container) -> dict:
         session.add_all([zone_a, zone_b])
         await session.flush()
 
-        seat_a1 = Seat(serial_number=1, row=1, col=1, zone_id=zone_a.id)
-        seat_a2 = Seat(serial_number=2, row=1, col=2, zone_id=zone_a.id)
-        seat_b1 = Seat(serial_number=1, row=1, col=1, zone_id=zone_b.id)
-        seat_b2 = Seat(serial_number=2, row=1, col=2, zone_id=zone_b.id)
+        seat_a1 = Seat(serial_number=0, row=1, col=1, zone_id=zone_a.id)
+        seat_a2 = Seat(serial_number=1, row=1, col=2, zone_id=zone_a.id)
+        seat_b1 = Seat(serial_number=0, row=1, col=1, zone_id=zone_b.id)
+        seat_b2 = Seat(serial_number=1, row=1, col=2, zone_id=zone_b.id)
         session.add_all([seat_a1, seat_a2, seat_b1, seat_b2])
         await session.flush()
 

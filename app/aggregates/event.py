@@ -88,32 +88,58 @@ class EventAggregate:
         ]
 
     async def event_layout(self) -> EventLayoutInternal:
-        """Every live zone's price, used by the publish rule."""
+        """Every live zone with its live seats - the publish-time snapshot.
+
+        Two filters carry weight here. Soft-deleted seats are excluded, or a
+        retired seat would be handed a bit in the existence bitmap. And the
+        join is an OUTER join, so a zone with no seats still comes back: the
+        publish rule prices every zone it is shown, and an empty zone silently
+        dropped here would be an unpriced zone that never blocks a publish.
+        """
         rows = await self._session.execute(
-            select(EventZone).join(EventSeat)
+            select(EventZone, EventSeat)
+            .outerjoin(
+                EventSeat,
+                (EventSeat.event_zone_id == EventZone.id) & (EventSeat.deleted_at == None),
+            )
+            .where(EventZone.event_id == self._event.id)
+            .where(EventZone.deleted_at == None)
+            .order_by(EventZone.name, EventSeat.serial_number)
+        )
+
+        zones: dict[int, EventZoneWithSeatInternal] = {}
+        for zone, seat in rows.all():
+            entry = zones.get(zone.id)
+            if entry is None:
+                entry = EventZoneWithSeatInternal(
+                    id=zone.id, name=zone.name, price=zone.price, seats=[]
+                )
+                zones[zone.id] = entry
+            if seat is not None:
+                entry.seats.append(
+                    EventSeatInternal(
+                        id=seat.id,
+                        row=seat.row,
+                        col=seat.col,
+                        status=seat.status,
+                        serial_number=seat.serial_number,
+                    )
+                )
+
+        return EventLayoutInternal(event=self._event, zones=list(zones.values()))
+
+    async def zone_ids(self) -> list[int]:
+        """Live zone ids only - what the cache needs to build its keys.
+
+        Deliberately not `event_layout()`: the caller only wants keys, and a
+        10k-seat event should not drag every seat through Python to get them.
+        """
+        rows = await self._session.execute(
+            select(EventZone.id)
             .where(EventZone.event_id == self._event.id)
             .where(EventZone.deleted_at == None)
         )
-
-        return EventLayoutInternal(
-            event=self._event,
-            zones=[
-                EventZoneWithSeatInternal(
-                    id=zone.id, name=zone.name, price=zone.price, seats=[
-                        EventSeatInternal(
-                            id=seat.id,
-                            row=seat.row,
-                            col=seat.col,
-                            status=seat.status,
-                            serial_number=seat.serial_number,
-                        )
-                        for seat in zone.seats()
-                    ]
-                )
-                for zone in rows.all()
-            ],
-        )
-
+        return list(rows.scalars().all())
 
     async def order_stats(self) -> EventOrderStatsInternal:
         """Counts orders that are not soft-deleted, whatever their status."""
@@ -223,7 +249,7 @@ class EventAggregate:
         await self._apply(self._event)
 
     async def add_zone(self, payload: EventZoneCreate) -> EventZoneWithSeatCountInternal:
-        """Adds a zone and its seats, numbered from 1 in payload order."""
+        """Adds a zone and its seats, numbered from 0 in payload order."""
         event_id = self._event.id
         zone = EventZone(event_id=event_id, name=payload.name, price=payload.price)
         self._session.add(zone)
@@ -246,7 +272,7 @@ class EventAggregate:
                 serial_number=serial,
                 status=SeatStatus.AVAILABLE,
             )
-            for serial, seat in enumerate(payload.seats, start=1)
+            for serial, seat in enumerate(payload.seats, start=0)
         ])
         await self._session.flush()
         await self._session.refresh(zone)
@@ -278,9 +304,10 @@ class EventAggregate:
         """Syncs a zone's layout, keyed on `(row, col)`: insert new positions,
         soft-delete missing ones, leave survivors untouched.
 
-        No renumbering - a survivor keeps its serial_number, which is its Redis
-        offset. New seats take max(serial_number) + 1 counting soft-deleted
-        rows, so a retired offset is never handed to a different seat.
+        No renumbering - a survivor keeps its serial_number, which *is* its
+        Redis bit offset. New seats take max(serial_number) + 1 counting
+        soft-deleted rows, so a retired offset is never handed to a different
+        seat.
         """
         await self._get_and_check_zone(event_zone_id)
         live = (
@@ -358,9 +385,15 @@ class EventAggregate:
         return total or 0
 
     async def _next_serial_number(self, event_zone_id: int) -> int:
+        """Next free number in a zone, or 0 for a zone with no seats yet.
+
+        Not `(current_max or 0) + 1`: numbering is 0-based, so a zone whose
+        only seat is number 0 has a falsy max and would collide with the
+        empty-zone case, handing out 1 and leaving bit 0 stranded.
+        """
         current_max = await self._session.scalar(
             select(func.max(EventSeat.serial_number)).where(
                 EventSeat.event_zone_id == event_zone_id
             )
         )
-        return (current_max or 0) + 1
+        return 0 if current_max is None else current_max + 1

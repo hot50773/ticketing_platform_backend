@@ -1,5 +1,5 @@
 [project]
-name = "redis-autocomplete"
+name = "ticketing_platform"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -17,7 +17,6 @@ dependencies = [
     "uvicorn>=0.49.0",
     "apscheduler>=3.11.3",
     "black>=26.5.1",
-    "redis-om>=1.1.0",
 ]
 
 
@@ -27,7 +26,7 @@ dependencies = [
 # this is typically a path given in POSIX (e.g. forward slashes)
 # format, relative to the token %(here)s which refers to the location of this
 # ini file
-script_location = "%(here)s/alembic"
+script_location = "%(here)s/migrations"
 
 # template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
 # Uncomment the line below if you want the files to be prepended with date and time
@@ -127,4 +126,5 @@ autogenerate_revision = "alembic revision --autogenerate -m"
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "httpx>=0.28.1",
 ]

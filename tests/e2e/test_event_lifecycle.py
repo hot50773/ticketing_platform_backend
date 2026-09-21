@@ -71,7 +71,7 @@ async def test_list_zone_seats_is_paginated(async_client: AsyncClient, seeded_ev
 
     body = (await async_client.get(f"{API}/{event_id}/event_zones/{zone_id}/seats")).json()
     assert body["total"] == 2
-    assert [s["serial_number"] for s in body["items"]] == [1, 2]
+    assert [s["serial_number"] for s in body["items"]] == [0, 1]
     assert all(s["status"] == "AVAILABLE" for s in body["items"])
 
 

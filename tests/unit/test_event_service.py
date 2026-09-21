@@ -85,7 +85,9 @@ async def test_delete_reads_and_writes_in_the_same_transaction():
     repo = FakeEventRepository()
     await a_service(repo).delete_event(1)
 
-    assert repo.calls == ["load_for_update", "order_stats", "soft_delete"]
+    assert repo.calls == [
+        "load_for_update", "order_stats", "zone_ids", "soft_delete", "clear_event_layouts",
+    ]
 
 
 @pytest.mark.asyncio
@@ -126,7 +128,7 @@ async def test_publish_warms_the_bitmap_before_it_writes():
     await a_service(repo, cache).publish_event(1)
 
     assert repo.calls.index("init_event_layouts") < repo.calls.index("publish")
-    assert [seat.serial_number for seat in cache.warmed[0].zones[0].seats] == [1, 2]
+    assert [seat.serial_number for seat in cache.warmed[0].zones[0].seats] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -161,7 +163,53 @@ async def test_unpublish_checks_orders_not_prices():
     repo = FakeEventRepository(is_active=True)
     await a_service(repo).unpublish_event(1)
 
-    assert repo.calls == ["load_for_update", "order_stats", "unpublish"]
+    assert repo.calls == [
+        "load_for_update", "order_stats", "zone_ids", "unpublish", "clear_event_layouts",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unpublish_clears_the_bitmap_only_after_it_writes():
+    """The mirror of publish: dropping a live event's bitmap would make every
+    seat read as non-existent, so the delete waits until the event is off sale."""
+    repo = FakeEventRepository(is_active=True)
+    cache = FakeEventLayoutCache(repo.calls)
+    await a_service(repo, cache).unpublish_event(1)
+
+    assert repo.calls.index("unpublish") < repo.calls.index("clear_event_layouts")
+    assert cache.cleared == [(1, [10])]
+
+
+@pytest.mark.asyncio
+async def test_delete_clears_the_bitmap_only_after_it_writes():
+    repo = FakeEventRepository()
+    cache = FakeEventLayoutCache(repo.calls)
+    await a_service(repo, cache).delete_event(1)
+
+    assert repo.calls.index("soft_delete") < repo.calls.index("clear_event_layouts")
+    assert cache.cleared == [(1, [10])]
+
+
+@pytest.mark.asyncio
+async def test_unpublish_reads_zone_ids_before_it_writes():
+    """delete_event soft-deletes the zones, so the ids have to be captured
+    while they are still live - otherwise the cache is handed an empty list
+    and the bitmaps are never dropped."""
+    repo = FakeEventRepository()
+    await a_service(repo).delete_event(1)
+
+    assert repo.calls.index("zone_ids") < repo.calls.index("soft_delete")
+
+
+@pytest.mark.asyncio
+async def test_blocked_unpublish_never_touches_the_cache():
+    repo = FakeEventRepository(is_active=True, order_count=1)
+    cache = FakeEventLayoutCache(repo.calls)
+
+    with pytest.raises(ActiveOrdersExistError):
+        await a_service(repo, cache).unpublish_event(1)
+
+    assert cache.cleared == []
 
 
 @pytest.mark.asyncio

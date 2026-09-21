@@ -10,9 +10,8 @@ Boundaries:
   - domain rules go through EventRuleValidator, which stays I/O free
   - ORM -> schema translation goes through EventSchemaMapper
   - the zone / seat layout lives in EventLayoutService, not here
-  - nothing here touches Redis; warming the seat bitmap belongs to
-    publish_event, where the layout freezes and serial_number becomes a
-    stable offset
+  - Redis is touched only where the layout freezes: publish_event warms the
+    seat bitmaps, unpublish_event and delete_event drop them again
 """
 import logging
 
@@ -109,14 +108,32 @@ class EventService:
             return self._mapper.to_event(event_aggr.event)
 
     async def unpublish_event(self, event_id: int) -> EventResponse:
-        """flow: assert no live order -> take off sale."""
+        """flow: assert no live order -> take off sale -> drop the bitmaps.
+
+        The cache is cleared *after* the transaction commits, the mirror image
+        of publish_event. Dropping a still-live event's bitmap would make every
+        seat read as non-existent, so it must not happen until the event is
+        certainly off sale; a bitmap left behind by a failed clear is inert.
+        """
         async with self._repository.load_for_update(event_id) as event:
             self._validator.validate_no_live_order(await event.order_stats())
+            zone_ids = await event.zone_ids()
             await event.unpublish()
-            return self._mapper.to_event(event.event)
+            response = self._mapper.to_event(event.event)
+
+        await self._cache.clear_event_layouts(event_id, zone_ids)
+        return response
 
     async def delete_event(self, event_id: int) -> None:
-        """flow: assert no live order -> soft-delete event + zones + seats."""
+        """flow: assert no live order -> soft-delete event + zones + seats ->
+        drop the bitmaps. Cleared after the commit, as in unpublish_event.
+
+        zone_ids is read before the soft-delete: afterwards every zone carries
+        a deleted_at and the query that builds the keys would come back empty.
+        """
         async with self._repository.load_for_update(event_id) as event:
             self._validator.validate_no_live_order(await event.order_stats())
+            zone_ids = await event.zone_ids()
             await event.soft_delete()
+
+        await self._cache.clear_event_layouts(event_id, zone_ids)

@@ -127,15 +127,21 @@ class EventRepository:
     @staticmethod
     async def _clone_zones(session: AsyncSession, event_id: int, venue_id: int) -> None:
         """Copies the venue's live zones. price stays NULL (not configured yet)."""
+        # created_at / updated_at are spelled out rather than left to the
+        # column defaults: those are `default_factory=func.now`, a *Python*
+        # side default, so SQLAlchemy hands asyncpg the func.now() construct
+        # as a bind parameter and asyncpg rejects it ("expected a datetime
+        # instance, got 'now'"). Naming them here renders now() as SQL.
         source = (
-            select(literal(event_id), Zone.name, Zone.id)
+            select(func.now(), func.now(), literal(event_id), Zone.name, Zone.id)
             .where(Zone.venue_id == venue_id)
             .where(Zone.deleted_at == None)
         )
         await session.execute(
             insert(EventZone).from_select(
-                ["event_id", "name", "source_zone_id"],
+                ["created_at", "updated_at", "event_id", "name", "source_zone_id"],
                 source,
+                include_defaults=False,
             )
         )
 
@@ -145,6 +151,8 @@ class EventRepository:
         joining freshly inserted event_zone rows back to their source zone."""
         source = (
             select(
+                func.now(),
+                func.now(),
                 EventZone.id,
                 Seat.row,
                 Seat.col,
@@ -161,6 +169,8 @@ class EventRepository:
         await session.execute(
             insert(EventSeat).from_select(
                 [
+                    "created_at",
+                    "updated_at",
                     "event_zone_id",
                     "row",
                     "col",
@@ -169,5 +179,6 @@ class EventRepository:
                     "source_seat_id",
                 ],
                 source,
+                include_defaults=False,
             )
         )

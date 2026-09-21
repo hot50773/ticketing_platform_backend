@@ -1,6 +1,13 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    # Without this the .env file is never read at all: pydantic-settings only
+    # looks at real environment variables by default, so every value below
+    # silently stayed at its hard-coded default and the app talked to
+    # autocomplete_db - a leftover from another project - instead of the
+    # database .env names.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     postgres_user: str = "postgres"
     postgres_password: str = "postgres_password"
     postgres_db: str = "autocomplete_db"

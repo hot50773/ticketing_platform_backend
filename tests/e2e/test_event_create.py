@@ -36,13 +36,13 @@ async def venue_template(container: Container) -> dict:
         await session.flush()
 
         session.add_all([
-            Seat(serial_number=1, row=1, col=1, zone_id=zone_a.id),
-            Seat(serial_number=2, row=1, col=2, zone_id=zone_a.id, deleted_at=now_utc()),
-            Seat(serial_number=3, row=1, col=3, zone_id=zone_a.id),
-            Seat(serial_number=1, row=1, col=1, zone_id=zone_b.id),
-            Seat(serial_number=2, row=1, col=2, zone_id=zone_b.id),
-            Seat(serial_number=1, row=1, col=1, zone_id=zone_c.id),
-            Seat(serial_number=2, row=1, col=2, zone_id=zone_c.id),
+            Seat(serial_number=0, row=1, col=1, zone_id=zone_a.id),
+            Seat(serial_number=1, row=1, col=2, zone_id=zone_a.id, deleted_at=now_utc()),
+            Seat(serial_number=2, row=1, col=3, zone_id=zone_a.id),
+            Seat(serial_number=0, row=1, col=1, zone_id=zone_b.id),
+            Seat(serial_number=1, row=1, col=2, zone_id=zone_b.id),
+            Seat(serial_number=0, row=1, col=1, zone_id=zone_c.id),
+            Seat(serial_number=1, row=1, col=2, zone_id=zone_c.id),
         ])
         await session.commit()
         return {"venue_id": venue.id, "zone_a_id": zone_a.id, "zone_b_id": zone_b.id}
@@ -96,7 +96,7 @@ async def test_clone_copies_only_live_zones_and_seats(container: Container, venu
     assert [z.name for z in zones] == ["A", "B"]  # zone C was soft-deleted
     by_zone = {z.id: z.name for z in zones}
     assert sorted((by_zone[s.event_zone_id], s.serial_number) for s in seats) == [
-        ("A", 1), ("A", 3), ("B", 1), ("B", 2)
+        ("A", 0), ("A", 2), ("B", 0), ("B", 1)
     ]
 
 
@@ -104,13 +104,13 @@ async def test_clone_copies_only_live_zones_and_seats(container: Container, venu
 async def test_clone_reuses_template_serial_numbers_and_allows_holes(
     container: Container, venue_template: dict
 ):
-    """A3 / A6: serial_number is copied verbatim, so zone A keeps the 1, 3 hole."""
+    """A3 / A6: serial_number is copied verbatim, so zone A keeps the 0, 2 hole."""
     repo = container.event_repository()
     layout = await clone(repo, venue_template["venue_id"])
 
     zones, seats = await read_layout(container, layout.event.id)
     zone_a = next(z for z in zones if z.name == "A")
-    assert sorted(s.serial_number for s in seats if s.event_zone_id == zone_a.id) == [1, 3]
+    assert sorted(s.serial_number for s in seats if s.event_zone_id == zone_a.id) == [0, 2]
 
 
 @pytest.mark.asyncio

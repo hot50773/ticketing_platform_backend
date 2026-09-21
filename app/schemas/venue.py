@@ -37,7 +37,7 @@ class SeatCreate(SeatBase):
     """POST /zones/{zone_id}/seats.
 
     `serial_number` is NOT accepted: the backend numbers seats per zone,
-    continuing from the zone's current maximum.
+    starting at 0 and continuing from the zone's current maximum.
     """
     pass
 
