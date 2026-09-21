@@ -14,10 +14,16 @@ AttributeError。
 
 用 AST 而不是 regex：`select(` 常常跨好幾行，字串比對會漏掉也會誤判。
 
-豁免（都是「欄位清單是語法上唯一選擇」的情境）：
-  1. 統計查詢     select(func.count()) / func.max() / ...
-  2. 純量子查詢   select(EventZone.id).scalar_subquery() — 子查詢只能選一欄
+豁免：
+  1. 統計查詢       select(func.count()) / func.max() / ...
+  2. 純量子查詢     select(EventZone.id).scalar_subquery() — 子查詢只能選一欄
   3. INSERT…SELECT  insert(T).from_select([...], source) — 必須對齊欄位清單
+  4. 單一主鍵       select(EventZone.id) — 只取主鍵，沒有投影形狀可言
+
+第 4 條的理由和前三條不同：前三條是語法上別無選擇，這條是這種查詢不會有
+「往投影裡多加一欄」的演化壓力 —— 它要的就是一串 id，回傳 list[int] 比把
+整批 entity 載進來只為了取 id 更誠實。但必須是「剛好一個引數且為主鍵」；
+select(Zone.id, Zone.name) 仍然是違規。
 
 退出碼 2 會把訊息回饋給 Claude 要求修正；其餘情況一律 0，不擋任何事。
 """
@@ -34,6 +40,10 @@ AGGREGATE_FUNCS = {
 
 # 這些呼叫接的 select 本來就只能是欄位清單
 SUBQUERY_WRAPPERS = {"scalar_subquery", "subquery", "exists", "cte", "label"}
+
+# 主鍵欄位名。本專案九張表的主鍵都由 TableBase 統一定義為 id；哪天出現複合
+# 主鍵或改名的主鍵，這個常數和 _is_primary_key_only() 要一起重新檢視。
+PRIMARY_KEY_ATTR = "id"
 
 SKIP_DIRS = {".venv", "migrations", "__pycache__", "node_modules", ".git"}
 
@@ -114,6 +124,19 @@ def _exempt_select_nodes(tree) -> set[int]:
     return exempt
 
 
+def _is_primary_key_only(args, columns) -> bool:
+    """剛好只選一個主鍵欄位，例如 select(EventZone.id)。
+
+    條件刻意收緊成「整個 select 只有這一個引數」：select(Zone.id, Zone.name)
+    的 columns 也含有主鍵，但它已經是一個有形狀的投影了。
+    """
+    return (
+        len(args) == 1
+        and len(columns) == 1
+        and columns[0].attr == PRIMARY_KEY_ATTR
+    )
+
+
 def find_violations(source: str) -> list[tuple[int, str]]:
     try:
         tree = ast.parse(source)
@@ -130,6 +153,8 @@ def find_violations(source: str) -> list[tuple[int, str]]:
             continue
 
         columns = [arg for arg in node.args if _is_column_ref(arg)]
+        if _is_primary_key_only(node.args, columns):
+            continue
         if columns:
             shown = ", ".join(f"{c.value.id}.{c.attr}" for c in columns[:3])
             if len(columns) > 3:
@@ -175,13 +200,14 @@ def main() -> int:
     lines += [f"  {shown_path}:{lineno}  select({cols})" for lineno, cols in violations]
     lines += [
         "",
-        "  select(EventZone.id)  ->  select(EventZone)，再於 Python 端取出需要的欄位",
+        "  select(Zone.id, Zone.name)  ->  select(Zone)，再於 Python 端取出需要的欄位",
         "",
         "欄位級別查詢回傳 Row tuple 而非 ORM 物件，呼叫端得靠位置解包，之後往投影",
         "裡加一欄就會默默改變所有呼叫端的形狀。",
         "",
         "已自動豁免：統計查詢（func.count / max / …）、純量子查詢（.scalar_subquery()）、",
-        "以及 INSERT…SELECT 的來源。若這裡確實屬於上述情境卻仍被擋下，請回報。",
+        f"INSERT…SELECT 的來源，以及只取單一主鍵的 select(Model.{PRIMARY_KEY_ATTR})。",
+        "若這裡確實屬於上述情境卻仍被擋下，請回報。",
     ]
     print("\n".join(lines), file=sys.stderr)
     return 2

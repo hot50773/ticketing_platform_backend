@@ -133,16 +133,19 @@ class EventAggregate:
 
         Deliberately not `event_layout()`: that one joins in every seat, and a
         10k-seat event should not drag all of them through Python just to
-        produce a handful of Redis keys. Zones alone are cheap.
+        produce a handful of Redis keys.
+
+        Selecting the bare primary key is the one column-level projection the
+        repo allows (see .claude/hooks/check_column_queries.py): there is no
+        projection shape here to drift, and list[int] is a more honest return
+        type than a batch of entities loaded only to read one attribute off.
         """
-        zones = (
-            await self._session.execute(
-                select(EventZone)
-                .where(EventZone.event_id == self._event.id)
-                .where(EventZone.deleted_at == None)
-            )
-        ).scalars().all()
-        return [zone.id for zone in zones]
+        rows = await self._session.execute(
+            select(EventZone.id)
+            .where(EventZone.event_id == self._event.id)
+            .where(EventZone.deleted_at == None)
+        )
+        return list(rows.scalars().all())
 
     async def order_stats(self) -> EventOrderStatsInternal:
         """Counts orders that are not soft-deleted, whatever their status."""
