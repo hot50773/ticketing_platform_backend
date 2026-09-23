@@ -1,29 +1,39 @@
+import importlib
+import pkgutil
+
 from dependency_injector import containers, providers
 
 from app.cache.event_layout import EventLayoutCache
-from app.config import settings
 from app.db.postgres import Database
 from app.db.redis import RedisClient
 from app.repositories.event import EventRepository
 from app.repositories.venue import VenueRepository
 from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
-from app.services.venue import VenueService
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
+from app.services.venue import VenueService
+
+
+def _get_modules(package_name: str) -> list[str]:
+    package = importlib.import_module(package_name)
+    modules = []
+
+    for _, module_name, is_pkg in pkgutil.walk_packages(path=package.__path__):
+        if is_pkg:
+            modules.extend(_get_modules(f"{package_name}.{module_name}"))
+        else:
+            modules.append(f"{package_name}.{module_name}")
+
+    return modules
 
 
 class Container(containers.DeclarativeContainer):
     """Dependency Injection Container managing project lifecycles and instances."""
 
     # Configure wiring modules for auto-inject dependencies injection
-    wiring_config = containers.WiringConfiguration(
-        modules=[
-            "app.routers.event",
-            "app.routers.venue",
-            "app.main",
-        ]
-    )
+    router_modules = _get_modules("app.routers")
+    wiring_config = containers.WiringConfiguration(modules=["app.main"] + router_modules)
 
     # Database connection manager registered as a singleton
     db = providers.Singleton(Database)

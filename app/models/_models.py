@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, Index, text
+from sqlalchemy.orm import relationship
 from sqlmodel import Field
 
 from app.enums import SeatStatus, OrderStatus, PaymentStatus
@@ -70,6 +71,8 @@ class Event(SoftDeletable, TableBase, table=True):
     )
     is_active: bool
     venue_id: int = Field(foreign_key="venue.id")
+    event_zones = relationship("EventZone", back_populates="event")
+    orders = relationship("Order", back_populates="event")
 
     __table_args__ = ({"comment": "活動，例如：演唱會、研討會"},)
 
@@ -90,6 +93,8 @@ class EventZone(SoftDeletable, TableBase, table=True):
         sa_column_kwargs={"comment": "該分區的票價；NULL 表示尚未設定，活動不可上架"},
     )
     source_zone_id: int | None = Field(sa_column_kwargs={"comment":"後端用；記錄原始參考的 zone_id"})
+    event_seats = relationship("EventSeat", back_populates="event_zone")
+    event = relationship("Event", back_populates="event_zones")
 
     __table_args__ = (
         Index("uq_event_zone", "event_id", "name", unique=True, postgresql_where=SOFT_DELETE_ACTIVE),
@@ -104,6 +109,10 @@ class EventSeat(SoftDeletable, TableBase, table=True):
     serial_number: int
     status: SeatStatus = Field(default=SeatStatus.AVAILABLE)
     source_seat_id: int | None = Field(sa_column_kwargs={"comment":"後端用；記錄原始參考的 seat_id"})
+
+    event_zone = relationship("EventZone", back_populates="event_seats")
+    tickets = relationship("OrderTicket", back_populates="event_seat")
+
 
     __table_args__ = (
         Index(
@@ -132,12 +141,21 @@ class Order(SoftDeletable, TableBase, table=True):
     )
     comment: str | None = Field(sa_column_kwargs={"comment":"訂單備註"})
 
+    tickets = relationship(
+        "OrderTicket",
+        back_populates="order",
+    )
+
 
 class OrderTicket(SoftDeletable, TableBase, table=True):
     __tablename__ = "order_ticket"
     order_id: int = Field(foreign_key="order.id")
     event_seat_id: int = Field(foreign_key="event_seat.id")
     amount: int = Field(sa_column_kwargs={"comment":"票價"})
+
+    order = relationship("Order", back_populates="tickets")
+    event = relationship("Event", back_populates="orders")
+    event_seat = relationship("EventSeat", back_populates="tickets")
 
     # Partial index, not a constraint: a soft-deleted ticket must stop
     # occupying its seat so the same seat can be re-added to the same order

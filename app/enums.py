@@ -21,6 +21,7 @@ class OrderStatus(enum.StrEnum):
 
 class PaymentStatus(enum.StrEnum):
     PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
 

@@ -61,8 +61,8 @@ class EventService:
 
     async def list_events(self, pagination: PaginationParams) -> Page[EventResponse]:
         """One page of non-deleted events."""
-        page = await self._repository.get_events(pagination)
-        return self._mapper.to_event_page(page)
+        paged_list = await self._repository.get_events(pagination)
+        return self._mapper.to_event_page(paged_list)
 
     async def get_event(self, event_id: int) -> EventDetailResponse:
         """Returns an event with its zones (seat counts only, not the seats)."""
