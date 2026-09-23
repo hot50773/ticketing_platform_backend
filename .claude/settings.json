@@ -9,6 +9,12 @@
             "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_column_queries.py\"",
             "statusMessage": "檢查 ORM 欄位級別查詢",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_redundant_comments.py\"",
+            "statusMessage": "檢查重述程式碼的註解",
+            "timeout": 15
           }
         ]
       }
