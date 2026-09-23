@@ -1,8 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, Index, text
-from sqlalchemy.orm import relationship
-from sqlmodel import Field
+from sqlmodel import Field, Relationship
 
 from app.enums import SeatStatus, OrderStatus, PaymentStatus
 from ._shared import TableBase, SoftDeletable
@@ -19,6 +18,18 @@ class User(TableBase, table=True):
 # row keep occupying its name / serial number forever, and would block the
 # EventSeat renumbering that Redis offsets depend on.
 SOFT_DELETE_ACTIVE = text("deleted_at IS NULL")
+
+# Relationships are declared lazy="raise" on purpose. The default ("select")
+# emits a query on first attribute access, and under asyncio that access
+# happens outside the greenlet that owns the connection - the failure is a
+# MissingGreenlet raised somewhere far from the code that caused it, often
+# only under load. Raising instead turns "you forgot to eager-load" into an
+# immediate, local error, and forces every traversal to say so at the query:
+#
+#     select(Order).options(selectinload(Order.tickets))
+#
+# See app/repositories/order.py for the loader chain the Order detail needs.
+LAZY_RAISE = {"lazy": "raise"}
 
 
 class Venue(SoftDeletable, TableBase, table=True):
@@ -71,8 +82,12 @@ class Event(SoftDeletable, TableBase, table=True):
     )
     is_active: bool
     venue_id: int = Field(foreign_key="venue.id")
-    event_zones = relationship("EventZone", back_populates="event")
-    orders = relationship("Order", back_populates="event")
+    event_zones: list["EventZone"] = Relationship(
+        back_populates="event", sa_relationship_kwargs=LAZY_RAISE
+    )
+    orders: list["Order"] = Relationship(
+        back_populates="event", sa_relationship_kwargs=LAZY_RAISE
+    )
 
     __table_args__ = ({"comment": "活動，例如：演唱會、研討會"},)
 
@@ -93,8 +108,12 @@ class EventZone(SoftDeletable, TableBase, table=True):
         sa_column_kwargs={"comment": "該分區的票價；NULL 表示尚未設定，活動不可上架"},
     )
     source_zone_id: int | None = Field(sa_column_kwargs={"comment":"後端用；記錄原始參考的 zone_id"})
-    event_seats = relationship("EventSeat", back_populates="event_zone")
-    event = relationship("Event", back_populates="event_zones")
+    event_seats: list["EventSeat"] = Relationship(
+        back_populates="event_zone", sa_relationship_kwargs=LAZY_RAISE
+    )
+    event: "Event" = Relationship(
+        back_populates="event_zones", sa_relationship_kwargs=LAZY_RAISE
+    )
 
     __table_args__ = (
         Index("uq_event_zone", "event_id", "name", unique=True, postgresql_where=SOFT_DELETE_ACTIVE),
@@ -110,8 +129,12 @@ class EventSeat(SoftDeletable, TableBase, table=True):
     status: SeatStatus = Field(default=SeatStatus.AVAILABLE)
     source_seat_id: int | None = Field(sa_column_kwargs={"comment":"後端用；記錄原始參考的 seat_id"})
 
-    event_zone = relationship("EventZone", back_populates="event_seats")
-    tickets = relationship("OrderTicket", back_populates="event_seat")
+    event_zone: "EventZone" = Relationship(
+        back_populates="event_seats", sa_relationship_kwargs=LAZY_RAISE
+    )
+    tickets: list["OrderTicket"] = Relationship(
+        back_populates="event_seat", sa_relationship_kwargs=LAZY_RAISE
+    )
 
 
     __table_args__ = (
@@ -141,9 +164,11 @@ class Order(SoftDeletable, TableBase, table=True):
     )
     comment: str | None = Field(sa_column_kwargs={"comment":"訂單備註"})
 
-    tickets = relationship(
-        "OrderTicket",
-        back_populates="order",
+    tickets: list["OrderTicket"] = Relationship(
+        back_populates="order", sa_relationship_kwargs=LAZY_RAISE
+    )
+    event: "Event" = Relationship(
+        back_populates="orders", sa_relationship_kwargs=LAZY_RAISE
     )
 
 
@@ -153,9 +178,12 @@ class OrderTicket(SoftDeletable, TableBase, table=True):
     event_seat_id: int = Field(foreign_key="event_seat.id")
     amount: int = Field(sa_column_kwargs={"comment":"票價"})
 
-    order = relationship("Order", back_populates="tickets")
-    event = relationship("Event", back_populates="orders")
-    event_seat = relationship("EventSeat", back_populates="tickets")
+    order: "Order" = Relationship(
+        back_populates="tickets", sa_relationship_kwargs=LAZY_RAISE
+    )
+    event_seat: "EventSeat" = Relationship(
+        back_populates="tickets", sa_relationship_kwargs=LAZY_RAISE
+    )
 
     # Partial index, not a constraint: a soft-deleted ticket must stop
     # occupying its seat so the same seat can be re-added to the same order

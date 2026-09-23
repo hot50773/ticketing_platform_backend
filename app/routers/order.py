@@ -1,4 +1,4 @@
-"""Event CRUD API.
+"""Order API.
 
 Domain errors raised by the Service are translated to HTTP status codes by the
 exception handlers registered in `app.main`, so handlers stay free of
@@ -13,22 +13,14 @@ from app.containers import Container
 from app.services.order import OrderService
 from app.schemas import Page, PaginationParams
 from app.schemas.order import (
-    OrderDetailResponse,
-    OrderResponse,
-    OrderPay,
     OrderCreate,
+    OrderDelete,
+    OrderDetailResponse,
+    OrderPay,
+    OrderResponse,
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
-"""
-# TODO: apis
-  建立訂單 POST /orders
-  付款 POST /orders/{order_id}/pay
-  取消訂單 POST /orders/{order_id}/cancel
-  # customer
-  查看訂單列表 GET /orders/list
-  查看訂單詳情 /orders/{order_id}
-"""
 
 # --------------------------------------------------------------------------- #
 # Order
@@ -40,7 +32,7 @@ async def create_order(
     payload: OrderCreate,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ):
-    """Creates an unpublished event and clones the venue's zone/seat layout."""
+    """Creates a pending order with its tickets."""
     return await order_service.create_order(payload)
 
 
@@ -60,7 +52,7 @@ async def get_order(
     order_id: int,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ):
-    """Gets an event with its zones and seats."""
+    """Gets an order with its tickets and their seat coordinates."""
     return await order_service.get_order(order_id)
 
 
@@ -71,7 +63,8 @@ async def pay_order(
     payload: OrderPay,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ):
-    """Updates the event's holding time. Rejected once the event is published."""
+    """Pays for the order. Rejected once it is cancelled, already paid, has a
+    charge in flight, or has passed its payment deadline."""
     return await order_service.execute_payment(order_id, payload)
 
 
@@ -81,4 +74,18 @@ async def cancel_order(
     order_id: int,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ):
+    """Cancels the order. The row survives - a paid order must be refunded
+    instead, and a cancelled one still blocks the event from unpublishing."""
     return await order_service.cancel_order(order_id)
+
+
+@router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
+@inject
+async def delete_order(
+    order_id: int,
+    payload: OrderDelete,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+):
+    """Releases the order: soft-deletes it with its tickets, freeing the seats.
+    Rejected once the order is paid for."""
+    await order_service.delete_order(order_id, payload)

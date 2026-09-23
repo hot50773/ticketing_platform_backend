@@ -48,9 +48,34 @@ class ActiveOrdersExistError(BusinessRuleViolationError):
     pass
 
 
+class OrderNotPayableError(BusinessRuleViolationError):
+    """Raised when paying an order that is not in a payable state - already
+    cancelled, already paid, or with a payment still in flight."""
+    pass
+
+
+class OrderNotCancellableError(BusinessRuleViolationError):
+    """Raised when cancelling an order that is already cancelled or already
+    paid for. A paid order goes through a refund, not a cancellation."""
+    pass
+
+
+class OrderNotDeletableError(BusinessRuleViolationError):
+    """Raised when soft-deleting a paid order. Deleting releases the seats, so
+    a settled purchase must be refunded rather than made to disappear."""
+    pass
+
+
+class PaymentDeadlinePassedError(BusinessRuleViolationError):
+    """Raised when paying an order whose payment_deadline has gone by; the
+    seats it held are no longer guaranteed to be its own."""
+    pass
+
+
 # Messages
 VENUE_NOT_FOUND_MSG = "Venue with id {venue_id} not found"
 ZONE_NOT_FOUND_MSG = "Zone with id {zone_id} not found"
 SEAT_NOT_FOUND_MSG = "Seat with id {seat_id} not found"
 EVENT_NOT_FOUND_MSG = "Event with id {event_id} not found"
 EVENT_ZONE_NOT_FOUND_MSG = "EventZone with id {event_zone_id} not found in event {event_id}"
+ORDER_NOT_FOUND_MSG = "Order with id {order_id} not found"

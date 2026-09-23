@@ -7,11 +7,15 @@ from app.cache.event_layout import EventLayoutCache
 from app.db.postgres import Database
 from app.db.redis import RedisClient
 from app.repositories.event import EventRepository
+from app.repositories.order import OrderRepository
 from app.repositories.venue import VenueRepository
 from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
+from app.services.order import OrderService, UnimplementedPaymentGateway
 from app.services.mappers import EventSchemaMapper
+from app.services.mappers.order import OrderSchemaMapper
 from app.services.validators import EventRuleValidator
+from app.services.validators.order import OrderValidator
 from app.services.venue import VenueService
 
 
@@ -56,14 +60,21 @@ class Container(containers.DeclarativeContainer):
         session_factory=async_session_factory
     )
 
+    order_repository = providers.Factory(
+        OrderRepository,
+        session_factory=async_session_factory
+    )
+
     # Cache
     event_layout_cache = providers.Factory(EventLayoutCache, redis_client=redis_client)
 
     # Domain rule validators (pure, no I/O)
     event_rule_validator = providers.Factory(EventRuleValidator)
+    order_validator = providers.Factory(OrderValidator)
 
     # ORM -> schema translation, kept out of the services
     event_schema_mapper = providers.Factory(EventSchemaMapper)
+    order_schema_mapper = providers.Factory(OrderSchemaMapper)
 
     # Services
     venue_service = providers.Factory(
@@ -84,4 +95,17 @@ class Container(containers.DeclarativeContainer):
         event_repository=event_repository,
         event_rule_validator=event_rule_validator,
         event_schema_mapper=event_schema_mapper
+    )
+
+    # The payment provider is a placeholder that raises: binding a fake success
+    # here would let an order reach CONFIRMED with no money behind it. Swap in
+    # the real gateway when POST /orders/{order_id}/pay goes live.
+    payment_gateway = providers.Factory(UnimplementedPaymentGateway)
+
+    order_service = providers.Factory(
+        OrderService,
+        order_repository=order_repository,
+        order_validator=order_validator,
+        order_schema_mapper=order_schema_mapper,
+        payment_gateway=payment_gateway,
     )

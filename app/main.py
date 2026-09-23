@@ -12,6 +12,7 @@ from app.exceptions import (
     InvalidEventTimeError,
 )
 from app.routers.event import router as events_router
+from app.routers.order import router as orders_router
 from app.routers.venue import router as venue_router
 from app.jobs.scheduler import start_scheduler
 
@@ -19,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 # Instantiate container and wire it at module level so injection decorators resolve correctly
 container = Container()
-container.wire(modules=["app.routers.event", "app.routers.venue", "app.main"])
+container.wire(
+    modules=["app.routers.event", "app.routers.order", "app.routers.venue", "app.main"]
+)
 
 IS_TESTING = "pytest" in sys.modules
 
@@ -80,6 +83,7 @@ async def _handle_rule_violation(_request: Request, exc: BusinessRuleViolationEr
 
 # 4. Register Routers
 app.include_router(events_router, prefix="/api/v1")
+app.include_router(orders_router, prefix="/api/v1")
 app.include_router(venue_router, prefix="/api/v1")
 
 @app.get("/")

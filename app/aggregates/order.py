@@ -1,37 +1,45 @@
-from sqlalchemy import func, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+"""The Order aggregate root: Order plus its tickets.
 
-from app.enums import SeatStatus, OrderStatus
-from app.exceptions import (
-    EVENT_ZONE_NOT_FOUND_MSG,
-    EntityConflictError,
-    EntityNotFoundError,
-)
+Loaded by OrderRepository inside a transaction and holding that session for its
+whole lifetime, so a rule checked here cannot go stale before the write that
+depends on it. Services never see the session.
+
+The aggregate carries no business rules - it only exposes the state the rules
+need (always as `*Internal` DTOs, never ORM rows) and applies the mutations a
+use case asks for. Judgement stays in OrderValidator.
+
+CONCURRENCY CONTRACT
+--------------------
+The admin paths on the event side take `FOR UPDATE` on the event row. This
+aggregate is the other half of that contract: creating or paying for an order
+MUST take `FOR SHARE` on the same event row first (see OrderRepository), so an
+admin unpublishing an event waits for in-flight orders instead of racing them.
+Shared locks do not block each other, so ticket grabbing stays concurrent.
+
+EAGER LOADING
+-------------
+Every relationship on the models is declared `lazy="raise"`. Reading
+`order.tickets` therefore only works when the repository loaded it, which it
+does through the `selectinload` chain in OrderRepository. That is deliberate:
+a lazy load here would fire a query from outside the greenlet that owns the
+connection and surface as MissingGreenlet somewhere unrelated.
+"""
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.enums import OrderStatus, PaymentStatus
 from app.libs.clock.functional import now_utc
-from app.models import Event, EventSeat, EventZone, Order
-from app.repositories._pagination import paginate
-from app.schemas import Page, PaginationParams
-from app.schemas.event import (
-    EventHoldingTimeUpdate,
-    EventLayoutSummaryInternal,
-    EventOrderStatsInternal,
-    EventProfileUpdate,
-    EventSeatLayout,
-    EventSeatSyncCountsInternal,
-    EventStatusInternal,
-    EventZoneCreate,
-    EventZoneInternal,
-    EventZoneProfileUpdate,
-    EventZoneWithSeatCountInternal,
-    EventZoneWithSeatInternal,
-    EventLayoutInternal, EventSeatInternal,
+from app.models import Order
+from app.schemas.order import (
+    OrderDelete,
+    OrderPay,
+    OrderStateInternal,
+    OrderTicketInternal,
+    OrderWithTicketsInternal,
 )
 
 
 class OrderAggregate:
-    """One order bound to the transaction that loaded it."""
+    """One order and its tickets, bound to the transaction that loaded it."""
 
     def __init__(self, session: AsyncSession, order: Order):
         self._session = session
@@ -43,36 +51,51 @@ class OrderAggregate:
         the mutators so every change is flushed and refreshed consistently."""
         return self._order
 
-    # @property
-    # def status(self) -> EventStatusInternal:
-    #     return EventStatusInternal(id=self._order.id, is_active=self._order.is_active)
-
-    # async def order_stats(self) -> EventOrderStatsInternal:
-    #     """Counts orders that are not soft-deleted, whatever their status."""
-    #     total = await self._session.scalar(
-    #         select(func.count())
-    #         .select_from(Order)
-    #         .where(Order.event_id == self._order.id)
-    #         .where(Order.deleted_at == None)
-    #     )
-    #     return EventOrderStatsInternal(active_order_count=total or 0)
+    # ----------------------------------------------------------------------- #
+    # State for the rules
+    # ----------------------------------------------------------------------- #
+    @property
+    def state(self) -> OrderStateInternal:
+        """What OrderValidator judges on. Deliberately not the aggregate
+        itself: a rule that needs an aggregate needs a database to test."""
+        return OrderStateInternal(
+            id=self._order.id,
+            status=self._order.status,
+            payment_status=self._order.payment_status,
+            payment_deadline=self._order.payment_deadline,
+        )
 
     # ----------------------------------------------------------------------- #
     # Reads
     # ----------------------------------------------------------------------- #
-    async def tickets(
-        self, event_zone_id: int, pagination: PaginationParams
-    ) -> Page[EventSeat]:
-        # TODO:
-        """One page of a zone's live seats, ordered by serial_number."""
-        await self._get_and_check_zone(event_zone_id)
-        stmt = (
-            select(EventSeat)
-            .where(EventSeat.event_zone_id == event_zone_id)
-            .where(EventSeat.deleted_at == None)
-            .order_by(EventSeat.serial_number)
-        )
-        return await paginate(self._session, stmt, pagination, EventSeat)
+    def tickets(self) -> list[OrderTicketInternal]:
+        """The order's live tickets with their seat coordinates resolved.
+
+        Synchronous on purpose: the rows are already in the session from the
+        repository's eager load, so there is nothing to await. Walking
+        `ticket.event_seat.event_zone` here rather than in the mapper keeps the
+        relationship traversal inside the transaction that loaded it.
+        """
+        return [
+            OrderTicketInternal(
+                id=ticket.id,
+                created_at=ticket.created_at,
+                updated_at=ticket.updated_at,
+                event_seat_id=ticket.event_seat_id,
+                event_zone_id=ticket.event_seat.event_zone_id,
+                zone_name=ticket.event_seat.event_zone.name,
+                row=ticket.event_seat.row,
+                col=ticket.event_seat.col,
+                serial_number=ticket.event_seat.serial_number,
+                amount=ticket.amount,
+            )
+            for ticket in self._order.tickets
+            if ticket.deleted_at is None
+        ]
+
+    def with_tickets(self) -> OrderWithTicketsInternal:
+        """The order plus its resolved tickets - what a detail read returns."""
+        return OrderWithTicketsInternal(order=self._order, tickets=self.tickets())
 
     # ----------------------------------------------------------------------- #
     # Mutations
@@ -80,27 +103,64 @@ class OrderAggregate:
     # Each one flushes and refreshes: updated_at is generated by the database,
     # so without it the caller would map a stale value into the response.
     # ----------------------------------------------------------------------- #
-    async def update_profile(self, payload: EventProfileUpdate) -> None:
-        self._order.name = payload.name
-        self._order.description = payload.description
+    async def mark_as_paying(self, payload: OrderPay) -> None:
+        """Claims the order for an in-flight payment.
+
+        Written and committed *before* the gateway is called, so a second
+        request for the same order finds IN_PROGRESS and is rejected rather
+        than charging the customer twice.
+
+        NOTE: payload.payment_method is not persisted - the order table has no
+        column for it. Either add one (plus a migration) or drop the field from
+        OrderPay; carrying it in the request and silently discarding it is the
+        one option that will mislead somebody later.
+        """
+        self._order.payment_status = PaymentStatus.IN_PROGRESS
         await self._apply(self._order)
 
-    async def publish(self) -> None:
-        self._order.is_active = True
+    async def mark_as_paid(self) -> None:
+        """Settles the order once the gateway has confirmed the charge."""
+        self._order.payment_status = PaymentStatus.SUCCESS
+        self._order.status = OrderStatus.CONFIRMED
         await self._apply(self._order)
 
-    async def soft_delete(self) -> None:
-        order = self._order
+    async def mark_as_payment_fail(self) -> None:
+        """Releases the in-flight claim after a failed or abandoned charge.
+
+        status stays PENDING: the order is still live and the customer may
+        retry until payment_deadline passes.
+        """
+        self._order.payment_status = PaymentStatus.FAILED
+        await self._apply(self._order)
+
+    async def cancel_order(self) -> None:
+        """Cancels the order. The row stays - a cancelled order is still part
+        of the customer's history, and the event rules deliberately count it."""
+        self._order.status = OrderStatus.CANCELLED
+        await self._apply(self._order)
+
+    async def soft_delete(self, payload: OrderDelete) -> None:
+        """Soft-deletes the order and its tickets.
+
+        Tickets go too, because the partial unique index on
+        (order_id, event_seat_id) only ignores soft-deleted rows: leaving them
+        live would keep the seats occupied by an order that no longer exists.
+
+        This is what releases an expired cart. Only soft-deleted orders stop
+        blocking an event from being unpublished - see
+        EventOrderStatsInternal - so the distinction from cancel_order()
+        carries real weight.
+        """
         now = now_utc()
-        order.deleted_at = now
-        await self._apply(order)
+        for ticket in self._order.tickets:
+            if ticket.deleted_at is None:
+                ticket.deleted_at = now
+                self._session.add(ticket)
 
-    # async def cancel_order(self):
-    #     order = self._order
-    #     now = now_utc()
-    #     order.canceled_at = now
-    #     order.status = OrderStatus.CANCELLED
-    #     await self._apply(order)
+        self._order.comment = payload.reason
+        self._order.deleted_at = now
+        await self._apply(self._order)
+
     # ----------------------------------------------------------------------- #
     # Internals
     # ----------------------------------------------------------------------- #
@@ -109,19 +169,3 @@ class OrderAggregate:
         self._session.add(instance)
         await self._session.flush()
         await self._session.refresh(instance)
-
-    # async def _get_and_check_zone(self, event_zone_id: int) -> EventZone:
-    #     """Fetches a zone and asserts it belongs to this event."""
-    #     zone = await self._session.scalar(
-    #         select(EventZone)
-    #         .where(EventZone.id == event_zone_id)
-    #         .where(EventZone.event_id == self._order.id)
-    #         .where(EventZone.deleted_at == None)
-    #     )
-    #     if not zone:
-    #         raise EntityNotFoundError(
-    #             EVENT_ZONE_NOT_FOUND_MSG.format(
-    #                 event_zone_id=event_zone_id, event_id=self._order.id
-    #             )
-    #         )
-    #     return zone
