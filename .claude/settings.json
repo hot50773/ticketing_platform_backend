@@ -15,6 +15,13 @@
             "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_redundant_comments.py\"",
             "statusMessage": "檢查重述程式碼的註解",
             "timeout": 15
+          },
+          {
+            "type": "prompt",
+            "prompt": "你是這個 Python repo 的註解審查員。只審查這次編輯「新增或修改」的註解與\ndocstring，不要去翻動檔案裡既有的內容。\n\n工具呼叫的 JSON：\n$ARGUMENTS\n\n規則：名稱已經說清楚的事，註解不要再說一次。\n\n判為問題（回報，並指出行號與該怎麼改）：\n  - 註解只是把下一行程式碼換句話說\n        # 計數器加一\n        counter += 1\n  - docstring 只是把函數名稱翻成一句話\n        def cancel_order(...): \"\"\"取消訂單。\"\"\"\n  - 同一件事重複講兩三次，或用三行講一行就講得完的事\n  - 中文註解重述英文程式碼的語意（例如 # 建立 session 之於 session = make_session()）\n\n判為沒問題（放過——以下都是這個 repo 刻意的風格）：\n  - 解釋「為什麼」的長註解：權衡、前置條件、副作用、失敗模式、為何不採用\n    另一種做法、實測得到的數字。這是本 repo 最有價值的部分。\n  - 提到名稱但補了資訊的。「Creates an unpublished event and clones the\n    venue's layout」補了「未上架」與「複製場地」，屬於好註解。\n  - 交叉引用與規格編號（\"A8.\"）、TODO、章節標題（# Cache）、型別與 API 契約說明。\n\n唯一判準：把這段註解刪掉之後，讀者會不會失去任何他從程式碼本身看不出來的\n資訊？不會 → 有問題。會 → 放過。\n\n拿不準就放過。誤殺一個好註解的代價遠高於漏掉一個多餘註解——會吵的檢查最後\n都會被關掉。\n\n若不是 .py 檔，或這次編輯沒有新增／修改任何註解與 docstring，直接通過。",
+            "statusMessage": "審查新增的註解",
+            "timeout": 45,
+            "continueOnBlock": true
           }
         ]
       }
