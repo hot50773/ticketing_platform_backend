@@ -56,8 +56,8 @@ class EventService:
         The event is always created unpublished with every zone price unset.
         """
         self._validator.validate_holding_time(payload)
-        async with self._repository.create(payload) as event:
-            return self._mapper.to_event_detail(await event.layout())
+        async with self._repository.create(payload) as event_aggr:
+            return self._mapper.to_event_detail(await event_aggr.layout())
 
     async def list_events(self, pagination: PaginationParams) -> Page[EventResponse]:
         """One page of non-deleted events."""
@@ -66,16 +66,16 @@ class EventService:
 
     async def get_event(self, event_id: int) -> EventDetailResponse:
         """Returns an event with its zones (seat counts only, not the seats)."""
-        async with self._repository.load(event_id) as event:
-            return self._mapper.to_event_detail(await event.layout())
+        async with self._repository.load(event_id) as event_aggr:
+            return self._mapper.to_event_detail(await event_aggr.layout())
 
     async def update_event_profile(
         self, event_id: int, payload: EventProfileUpdate
     ) -> EventResponse:
         """Updates name / description. Allowed while the event is published."""
-        async with self._repository.load_for_update(event_id) as event:
-            await event.update_profile(payload)
-            return self._mapper.to_event(event.event)
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            await event_aggr.update_profile(payload)
+            return self._mapper.to_event(event_aggr.event)
 
     async def update_event_holding_time(
         self, event_id: int, payload: EventHoldingTimeUpdate
@@ -85,11 +85,11 @@ class EventService:
         Publication is checked before the dates so a published event is told to
         unpublish first, rather than being sent to fix dates it cannot change.
         """
-        async with self._repository.load_for_update(event_id) as event:
-            self._validator.validate_unpublished(event.status)
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            self._validator.validate_unpublished(event_aggr.status)
             self._validator.validate_holding_time(payload)
-            await event.set_holding_time(payload)
-            return self._mapper.to_event(event.event)
+            await event_aggr.set_holding_time(payload)
+            return self._mapper.to_event(event_aggr.event)
 
     async def publish_event(self, event_id: int) -> EventResponse:
         """flow: assert every zone exists and is priced -> put on sale.
@@ -115,11 +115,11 @@ class EventService:
         seat read as non-existent, so it must not happen until the event is
         certainly off sale; a bitmap left behind by a failed clear is inert.
         """
-        async with self._repository.load_for_update(event_id) as event:
-            self._validator.validate_no_live_order(await event.order_stats())
-            zone_ids = await event.zone_ids()
-            await event.unpublish()
-            response = self._mapper.to_event(event.event)
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            self._validator.validate_no_live_order(await event_aggr.order_stats())
+            zone_ids = await event_aggr.zone_ids()
+            await event_aggr.unpublish()
+            response = self._mapper.to_event(event_aggr.event)
 
         await self._cache.clear_event_layouts(event_id, zone_ids)
         return response
@@ -131,9 +131,9 @@ class EventService:
         zone_ids is read before the soft-delete: afterwards every zone carries
         a deleted_at and the query that builds the keys would come back empty.
         """
-        async with self._repository.load_for_update(event_id) as event:
-            self._validator.validate_no_live_order(await event.order_stats())
-            zone_ids = await event.zone_ids()
-            await event.soft_delete()
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            self._validator.validate_no_live_order(await event_aggr.order_stats())
+            zone_ids = await event_aggr.zone_ids()
+            await event_aggr.soft_delete()
 
         await self._cache.clear_event_layouts(event_id, zone_ids)

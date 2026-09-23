@@ -40,9 +40,9 @@ class EventLayoutService:
         self, event_id: int, payload: EventZoneCreate
     ) -> EventZoneResponse:
         """flow: assert unpublished -> create the zone and its seats."""
-        async with self._repository.load_for_update(event_id) as event:
-            self._validator.validate_unpublished(event.status)
-            created = await event.add_zone(payload)
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            self._validator.validate_unpublished(event_aggr.status)
+            created = await event_aggr.add_zone(payload)
             return self._mapper.to_zone(created)
 
     async def update_event_zone_profile(
@@ -53,16 +53,16 @@ class EventLayoutService:
         Deliberately has no unpublished check: name and price stay editable
         after the event goes live.
         """
-        async with self._repository.load_for_update(event_id) as event:
-            updated = await event.update_zone_profile(event_zone_id, payload)
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            updated = await event_aggr.update_zone_profile(event_zone_id, payload)
             return self._mapper.to_zone(updated)
 
     async def list_event_zone_seats(
         self, event_id: int, event_zone_id: int, pagination: PaginationParams
     ) -> Page[EventSeatResponse]:
         """One page of a zone's seat layout with each seat's current status."""
-        async with self._repository.load(event_id) as event:
-            page = await event.zone_seats(event_zone_id, pagination)
+        async with self._repository.load(event_id) as event_aggr:
+            page = await event_aggr.zone_seats(event_zone_id, pagination)
             return self._mapper.to_seat_page(page)
 
     async def replace_event_zone_seats(
@@ -73,10 +73,10 @@ class EventLayoutService:
         The occupied-seat check and the rewrite share one locked transaction, so
         a seat cannot be claimed in between and then silently dropped.
         """
-        async with self._repository.load_for_update(event_id) as event:
-            self._validator.validate_unpublished(event.status)
+        async with self._repository.load_for_update(event_id) as event_aggr:
+            self._validator.validate_unpublished(event_aggr.status)
             self._validator.validate_no_occupied_seat(
-                await event.occupied_seat_count(event_zone_id)
+                await event_aggr.occupied_seat_count(event_zone_id)
             )
-            counts = await event.sync_zone_seats(event_zone_id, payload.seats)
+            counts = await event_aggr.sync_zone_seats(event_zone_id, payload.seats)
             return self._mapper.to_layout_sync(counts)

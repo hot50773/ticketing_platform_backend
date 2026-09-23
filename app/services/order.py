@@ -88,8 +88,8 @@ class OrderService:
         checked here yet - see the TODO in the module notes below.
         """
         self._validator.validate_create_order(payload)
-        async with self._repository.create(payload) as order:
-            return self._mapper.to_order_detail(order.with_tickets())
+        async with self._repository.create(payload) as order_aggr:
+            return self._mapper.to_order_detail(order_aggr.with_tickets())
 
     async def list_orders(self, pagination: PaginationParams) -> Page[OrderResponse]:
         """One page of non-deleted orders, headers only."""
@@ -98,8 +98,8 @@ class OrderService:
 
     async def get_order(self, order_id: int) -> OrderDetailResponse:
         """Returns an order with its tickets and their seat coordinates."""
-        async with self._repository.load(order_id) as order:
-            return self._mapper.to_order_detail(order.with_tickets())
+        async with self._repository.load(order_id) as order_aggr:
+            return self._mapper.to_order_detail(order_aggr.with_tickets())
 
     async def cancel_order(self, order_id: int) -> OrderResponse:
         """flow: assert cancellable -> mark CANCELLED.
@@ -107,10 +107,10 @@ class OrderService:
         The row survives. A cancelled order still counts against unpublishing
         the event; only a released (soft-deleted) one stops counting.
         """
-        async with self._repository.load_for_update(order_id) as order:
-            self._validator.validate_cancellable(order.state)
-            await order.cancel_order()
-            return self._mapper.to_order(order.order)
+        async with self._repository.load_for_update(order_id) as order_aggr:
+            self._validator.validate_cancellable(order_aggr.state)
+            await order_aggr.cancel_order()
+            return self._mapper.to_order(order_aggr.order)
 
     async def delete_order(self, order_id: int, payload: OrderDelete) -> None:
         """flow: assert deletable -> soft-delete order + tickets.
@@ -119,9 +119,9 @@ class OrderService:
         (order_id, event_seat_id) ignores soft-deleted rows, so the seats
         become buyable again.
         """
-        async with self._repository.load_for_update(order_id) as order:
-            self._validator.validate_deletable(order.state)
-            await order.soft_delete(payload)
+        async with self._repository.load_for_update(order_id) as order_aggr:
+            self._validator.validate_deletable(order_aggr.state)
+            await order_aggr.soft_delete(payload)
 
     async def execute_payment(self, order_id: int, payload: OrderPay) -> OrderResponse:
         """flow: claim -> charge -> settle, as three separate transactions.
@@ -145,23 +145,23 @@ class OrderService:
         this request - it needs a reconciliation job that asks the provider
         what actually happened. Left explicit here rather than pretended away.
         """
-        async with self._repository.load_for_update(order_id) as order:
-            self._validator.validate_payable(order.state)
-            amount = order.order.checkout_amount
-            await order.mark_as_paying(payload)
+        async with self._repository.load_for_update(order_id) as order_aggr:
+            self._validator.validate_payable(order_aggr.state)
+            amount = order_aggr.order.checkout_amount
+            await order_aggr.mark_as_paying(payload)
 
         try:
             transaction_id = await self._payment_gateway.charge(order_id, amount, payload)
         except Exception:
             logger.exception("Charge failed for order %s; releasing the claim", order_id)
-            async with self._repository.load_for_update(order_id) as order:
-                await order.mark_as_payment_fail()
+            async with self._repository.load_for_update(order_id) as order_aggr:
+                await order_aggr.mark_as_payment_fail()
             raise
 
         logger.info("Order %s charged, provider transaction %s", order_id, transaction_id)
-        async with self._repository.load_for_update(order_id) as order:
-            await order.mark_as_paid()
-            return self._mapper.to_order(order.order)
+        async with self._repository.load_for_update(order_id) as order_aggr:
+            await order_aggr.mark_as_paid()
+            return self._mapper.to_order(order_aggr.order)
 
 
 # TODO (not interface - business decisions still open):
