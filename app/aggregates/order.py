@@ -20,7 +20,7 @@ EAGER LOADING
 -------------
 Every relationship on the models is declared `lazy="raise"`. Reading
 `order.tickets` therefore only works when the repository loaded it, which it
-does through the `selectinload` chain in OrderRepository. That is deliberate:
+does through TICKET_DETAIL_LOADER in OrderRepository. That is deliberate:
 a lazy load here would fire a query from outside the greenlet that owns the
 connection and surface as MissingGreenlet somewhere unrelated.
 """
@@ -71,6 +71,11 @@ class OrderAggregate:
     def tickets(self) -> list[OrderTicketInternal]:
         """The order's live tickets with their seat coordinates resolved.
 
+        "Live" is TICKET_DETAIL_LOADER's doing, not this method's - it filters
+        the tickets hop on deleted_at, so a released ticket never reaches the
+        collection. Filtering again here would duplicate the rule and let the
+        two copies drift.
+
         Synchronous on purpose: the rows are already in the session from the
         repository's eager load, so there is nothing to await. Walking
         `ticket.event_seat.event_zone` here rather than in the mapper keeps the
@@ -90,7 +95,6 @@ class OrderAggregate:
                 amount=ticket.amount,
             )
             for ticket in self._order.tickets
-            if ticket.deleted_at is None
         ]
 
     def with_tickets(self) -> OrderWithTicketsInternal:
@@ -153,6 +157,9 @@ class OrderAggregate:
         """
         now = now_utc()
         for ticket in self._order.tickets:
+            # Always true while the loader filters on deleted_at. Kept anyway:
+            # the rule it guards - never overwrite an earlier release timestamp
+            # - must not rest on which loader the caller happened to use.
             if ticket.deleted_at is None:
                 ticket.deleted_at = now
                 self._session.add(ticket)
