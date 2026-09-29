@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import select
 
 from app.aggregates.order import OrderAggregate
@@ -29,10 +29,26 @@ from app.schemas.order import OrderCreate
 # Every relationship is lazy="raise", so a detail read has to spell out the
 # whole chain it intends to walk: order -> tickets -> seat -> zone. Named once
 # here so the three entry points cannot drift apart.
+#
+# The tickets hop is the only one that filters and the only one loaded by a
+# second SELECT. Both follow from it being the only collection in the chain:
+#   - Filtering it shortens a list. A released ticket has to stay out of the
+#     detail response, and the predicate is also what lets Postgres use
+#     uq_order_ticket, whose index is partial on `deleted_at IS NULL`. The same
+#     filter on either seat hop would resolve to None instead of a short list
+#     and break the walk in OrderAggregate.tickets().
+#   - joinedload on it would repeat the order row once per ticket. The two seat
+#     hops are many-to-one, so they join without multiplying rows.
+#
+# The seat hops stay outer joins even though NOT NULL plus the foreign key make
+# an inner join return the same rows today. The point is what happens if that
+# stops holding: an outer join leaves event_seat as None and crashes
+# OrderAggregate.tickets(), where an inner join would drop the ticket and leave
+# the detail response quietly short of what the customer paid for.
 TICKET_DETAIL_LOADER = (
-    selectinload(Order.tickets)
-    .selectinload(OrderTicket.event_seat)
-    .selectinload(EventSeat.event_zone)
+    selectinload(Order.tickets.and_(OrderTicket.deleted_at == None))
+    .joinedload(OrderTicket.event_seat)
+    .joinedload(EventSeat.event_zone)
 )
 
 
