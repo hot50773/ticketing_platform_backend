@@ -9,6 +9,7 @@ from app.db.redis import RedisClient
 from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
 from app.repositories.venue import VenueRepository
+from app.services.calculators.order import OrderCalculator
 from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
 from app.services.order import OrderService, UnimplementedPaymentGateway
@@ -72,6 +73,9 @@ class Container(containers.DeclarativeContainer):
     event_rule_validator = providers.Factory(EventRuleValidator)
     order_validator = providers.Factory(OrderValidator)
 
+    # Pricing and deadlines, kept out of the services (also pure, no I/O)
+    order_calculator = providers.Factory(OrderCalculator)
+
     # ORM -> schema translation, kept out of the services
     event_schema_mapper = providers.Factory(EventSchemaMapper)
     order_schema_mapper = providers.Factory(OrderSchemaMapper)
@@ -106,6 +110,7 @@ class Container(containers.DeclarativeContainer):
         OrderService,
         order_repository=order_repository,
         order_validator=order_validator,
+        order_calculator=order_calculator,
         order_schema_mapper=order_schema_mapper,
         payment_gateway=payment_gateway,
     )

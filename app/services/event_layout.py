@@ -41,7 +41,7 @@ class EventLayoutService:
     ) -> EventZoneResponse:
         """flow: assert unpublished -> create the zone and its seats."""
         async with self._repository.load_for_update(event_id) as event_aggr:
-            self._validator.validate_unpublished(event_aggr.status)
+            self._validator.validate_unpublished(event_aggr.state)
             created = await event_aggr.add_zone(payload)
             return self._mapper.to_zone(created)
 
@@ -74,7 +74,7 @@ class EventLayoutService:
         a seat cannot be claimed in between and then silently dropped.
         """
         async with self._repository.load_for_update(event_id) as event_aggr:
-            self._validator.validate_unpublished(event_aggr.status)
+            self._validator.validate_unpublished(event_aggr.state)
             self._validator.validate_no_occupied_seat(
                 await event_aggr.occupied_seat_count(event_zone_id)
             )

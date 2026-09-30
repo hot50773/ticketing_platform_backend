@@ -17,7 +17,7 @@ from app.exceptions import (
 from app.schemas.event import (
     EventHoldingTime,
     EventOrderStatsInternal,
-    EventStatusInternal,
+    EventStateInternal,
     EventZoneInternal,
 )
 from app.services.validators import EventRuleValidator
@@ -36,6 +36,13 @@ def zone(name: str, price: int | None) -> EventZoneInternal:
 
 def holding_time(start_at, end_at) -> EventHoldingTime:
     return EventHoldingTime(start_at=start_at, end_at=end_at)
+
+
+def event_state(is_active: bool, id: int = 1) -> EventStateInternal:
+    """start_at is required by the DTO but no publish-side rule reads it."""
+    return EventStateInternal(
+        id=id, is_active=is_active, start_at=NOW + timedelta(days=1)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -83,12 +90,12 @@ def test_holding_time_compares_instants_not_wall_clock(validator):
 # B. validate_unpublished
 # --------------------------------------------------------------------------- #
 def test_unpublished_event_is_editable(validator):
-    validator.validate_unpublished(EventStatusInternal(id=1, is_active=False))
+    validator.validate_unpublished(event_state(is_active=False))
 
 
 def test_published_event_is_not_editable(validator):
     with pytest.raises(EventPublishedError) as exc:
-        validator.validate_unpublished(EventStatusInternal(id=7, is_active=True))
+        validator.validate_unpublished(event_state(id=7, is_active=True))
     assert "7" in str(exc.value)
 
 

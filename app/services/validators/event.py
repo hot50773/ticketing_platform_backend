@@ -19,7 +19,7 @@ from app.libs.clock.functional import now_utc
 from app.schemas.event import (
     EventHoldingTime,
     EventOrderStatsInternal,
-    EventStatusInternal,
+    EventStateInternal,
     EventZoneInternal,
     EventZoneWithSeatInternal,
 )
@@ -44,15 +44,15 @@ class EventRuleValidator:
                 f"start_at {start_at.isoformat()}"
             )
 
-    def validate_unpublished(self, event_status: EventStatusInternal) -> None:
+    def validate_unpublished(self, event_state: EventStateInternal) -> None:
         """Guards every operation that a published event must not allow:
         changing the holding time, and adding or reshaping zones and seats.
 
         Zone name and price are exempt - they stay editable after publishing.
         """
-        if event_status.is_active:
+        if event_state.is_active:
             raise EventPublishedError(
-                f"Event {event_status.id} is published; "
+                f"Event {event_state.id} is published; "
                 f"this operation is only allowed while it is unpublished"
             )
 

@@ -8,6 +8,7 @@ paths also take a row lock.
 Boundaries:
   - persistence goes through the aggregate, never a session
   - domain rules go through OrderValidator, which stays I/O free
+  - prices and deadlines go through OrderCalculator, which stays I/O free
   - ORM -> schema translation goes through OrderSchemaMapper
   - the payment provider sits behind PaymentGateway, so nothing here knows
     whether a charge is a network call, a mock, or a queue
@@ -27,6 +28,7 @@ from app.schemas.order import (
     OrderPay,
     OrderResponse,
 )
+from app.services.calculators.order import OrderCalculator
 from app.services.mappers.order import OrderSchemaMapper
 from app.services.validators.order import OrderValidator
 
@@ -73,22 +75,47 @@ class OrderService:
         self,
         order_repository: OrderRepository,
         order_validator: OrderValidator,
+        order_calculator: OrderCalculator,
         order_schema_mapper: OrderSchemaMapper,
         payment_gateway: PaymentGateway,
     ):
         self._repository = order_repository
         self._validator = order_validator
+        self._calculator = order_calculator
         self._mapper = order_schema_mapper
         self._payment_gateway = payment_gateway
 
     async def create_order(self, payload: OrderCreate) -> OrderDetailResponse:
-        """flow: validate the payload -> insert order + tickets.
+        """flow: assert the event is on sale -> resolve and assert the seats ->
+        price them -> insert order + tickets.
 
-        The order is always created PENDING / PENDING. Seat availability is not
-        checked here yet - see the TODO in the module notes below.
+        All of it inside one transaction holding `FOR SHARE` on the event row,
+        so the event cannot be unpublished or deleted between the rules and the
+        insert.
+
+        The request only says which seats. The ticket prices come from the
+        event zones and the payment deadline from OrderCalculator, because a
+        client that could name its own price or its own hold window would be
+        the whole business rule.
+
+        The order is always created PENDING / PENDING.
         """
-        self._validator.validate_create_order(payload)
-        async with self._repository.create(payload) as order_aggr:
+        async with self._repository.load_for_create(payload) as order_factory:
+            self._validator.validate_event_orderable(order_factory.event_state)
+            seats = await order_factory.seat_prices()
+            self._validator.validate_seats_orderable(
+                payload.event_id, payload.event_seat_ids, seats
+            )
+
+            # TODO: 座位是否已被別人鎖走或售出，要在這裡用 Redis bitmap 檢查，
+            # 擋下來才往下計價。
+            #
+            # 資料庫擋不住這件事：uq_order_ticket 是 (order_id, event_seat_id)
+            # 的部分唯一索引，只擋同一張訂單重複同一個座位，不擋兩張訂單同時
+            # 搶同一個座位。在這個檢查補上之前，並行下單會超賣。
+
+            pricing = self._calculator.price_order(payload.event_seat_ids, seats)
+            order_aggr = await order_factory.create(pricing)
             return self._mapper.to_order_detail(order_aggr.with_tickets())
 
     async def list_orders(self, pagination: PaginationParams) -> Page[OrderResponse]:
@@ -164,13 +191,10 @@ class OrderService:
             return self._mapper.to_order(order_aggr.order)
 
 
-# TODO (not interface - business decisions still open):
-#   - Seat availability. create_order writes tickets without checking whether
-#     the seats are free; the partial unique index stops the same seat being
-#     sold twice within one order, not across orders. That check belongs on
-#     the Redis bitmap being built in app/cache/event_layout.py.
-#   - "Event still on sale" rule. OrderValidator.validate_create_order can only
-#     see the payload; the event-state rule needs EventRepository to read the
-#     event and hand an *Internal DTO to a sibling validator method.
-#   - Expiry. Nothing releases an order whose payment_deadline has passed.
-#     app/jobs/ is where that scheduler would live, calling delete_order.
+# TODO
+#   建立訂單時的座位鎖定，還沒接上：
+#     - 座位尚未被別人預訂走 -> 用 redis bitmap 檢查（人工實作，位置留在
+#       create_order 裡）
+#     - 沒有這道檢查之前，並行下單會超賣：DB 的 uq_order_ticket 只擋單張訂單
+#       內重複座位，擋不了兩張訂單搶同一個座位
+#   付款成功後要把 EventSeat.status 推到 RESERVED，並更新 redis 的 sold bitmap

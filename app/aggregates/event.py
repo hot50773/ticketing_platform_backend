@@ -15,11 +15,13 @@ transaction can still insert an order between our count and our update. The
 admin paths therefore load the event row with `FOR UPDATE`
 (EventRepository.load_for_update).
 
-When the booking flow is rebuilt it MUST take `FOR SHARE` on the same event row
-before creating an order. Shared locks do not block each other, so ticket
-grabbing stays fully concurrent, while an admin's `FOR UPDATE` waits for the
-in-flight orders and blocks new ones. Taking `FOR UPDATE` on the booking path
-instead would serialise every purchase for an event - do not do that.
+The booking flow takes `FOR SHARE` on the same event row before creating an
+order (OrderRepository.load_for_create), which is also what lets it read `status`
+and `seat_prices()` here without an admin changing either underneath it. Shared
+locks do not block each other, so ticket grabbing stays fully concurrent, while
+an admin's `FOR UPDATE` waits for the in-flight orders and blocks new ones.
+Taking `FOR UPDATE` on the booking path instead would serialise every purchase
+for an event - do not do that.
 """
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
@@ -42,8 +44,9 @@ from app.schemas.event import (
     EventOrderStatsInternal,
     EventProfileUpdate,
     EventSeatLayout,
+    EventSeatPriceInternal,
     EventSeatSyncCountsInternal,
-    EventStatusInternal,
+    EventStateInternal,
     EventZoneCreate,
     EventZoneInternal,
     EventZoneProfileUpdate,
@@ -72,8 +75,14 @@ class EventAggregate:
     # State for the rules
     # ----------------------------------------------------------------------- #
     @property
-    def status(self) -> EventStatusInternal:
-        return EventStatusInternal(id=self._event.id, is_active=self._event.is_active)
+    def state(self) -> EventStateInternal:
+        """What both rule validators judge the event on - see
+        EventStateInternal for why one projection serves both."""
+        return EventStateInternal(
+            id=self._event.id,
+            is_active=self._event.is_active,
+            start_at=self._event.start_at,
+        )
 
     async def event_zones(self) -> list[EventZoneInternal]:
         """Every live zone's price, used by the publish rule."""
@@ -156,6 +165,35 @@ class EventAggregate:
             .where(Order.deleted_at == None)
         )
         return EventOrderStatsInternal(active_order_count=total or 0)
+
+    async def seat_prices(self, event_seat_ids: list[int]) -> list[EventSeatPriceInternal]:
+        """The named seats of this event, each with its zone's price.
+
+        The booking path's read: an order prices a handful of seats, so this
+        takes the ids instead of walking the layout the publish rules use.
+
+        The join is inner, the opposite of the outer joins everywhere else in
+        this aggregate. Those exist so a zone with no seats still shows up and
+        can block a publish; here a seat that fails to resolve - deleted, or
+        sitting in another event - is exactly what the caller must hear about,
+        and leaving it out of the result is how it hears. The gap between what
+        was asked for and what came back is the answer, so this raises nothing
+        itself: OrderValidator turns the missing ids into the error.
+        """
+        rows = await self._session.execute(
+            select(EventSeat, EventZone)
+            .join(EventZone, EventZone.id == EventSeat.event_zone_id)
+            .where(EventSeat.id.in_(event_seat_ids))
+            .where(EventSeat.deleted_at == None)
+            .where(EventZone.event_id == self._event.id)
+            .where(EventZone.deleted_at == None)
+        )
+        return [
+            EventSeatPriceInternal(
+                event_seat_id=seat.id, event_zone_id=zone.id, price=zone.price
+            )
+            for seat, zone in rows.all()
+        ]
 
     async def occupied_seat_count(self, event_zone_id: int) -> int:
         await self._get_and_check_zone(event_zone_id)

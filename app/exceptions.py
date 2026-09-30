@@ -48,6 +48,19 @@ class ActiveOrdersExistError(BusinessRuleViolationError):
     pass
 
 
+class EventNotPublishedError(BusinessRuleViolationError):
+    """Raised when ordering from an event that is not published yet, so there
+    is nothing to buy. The mirror of EventPublishedError, which guards the
+    admin operations that only an unpublished event allows."""
+    pass
+
+
+class EventStartedError(BusinessRuleViolationError):
+    """Raised when ordering from an event that has already started. Sales close
+    at start_at: a seat sold after the doors open is one nobody can occupy."""
+    pass
+
+
 class OrderNotPayableError(BusinessRuleViolationError):
     """Raised when paying an order that is not in a payable state - already
     cancelled, already paid, or with a payment still in flight."""
@@ -78,4 +91,5 @@ ZONE_NOT_FOUND_MSG = "Zone with id {zone_id} not found"
 SEAT_NOT_FOUND_MSG = "Seat with id {seat_id} not found"
 EVENT_NOT_FOUND_MSG = "Event with id {event_id} not found"
 EVENT_ZONE_NOT_FOUND_MSG = "EventZone with id {event_zone_id} not found in event {event_id}"
+EVENT_SEAT_NOT_FOUND_MSG = "EventSeat(s) {event_seat_ids} not found in event {event_id}"
 ORDER_NOT_FOUND_MSG = "Order with id {order_id} not found"

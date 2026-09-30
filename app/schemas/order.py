@@ -15,48 +15,44 @@ from sqlmodel import SQLModel, Field
 
 from app.enums import OrderStatus, PaymentStatus
 from app.models import Order
-from ._shared import UtcDatetime, _TableMetaMixin
+from ._shared import _TableMetaMixin
 
 
 # --------------------------------------------------------------------------- #
 # Requests - Order
 # --------------------------------------------------------------------------- #
 
-class OrderTicketCreate(SQLModel):
-    """One seat being bought, with the price it is being bought at.
-
-    The amount is carried per ticket rather than read from the zone, because a
-    price change after the order is placed must not retroactively alter what
-    the customer agreed to pay.
-    """
-    event_seat_id: int
-    amount: int = Field(ge=0, description="票價")
-
-
-def _reject_duplicate_seats(tickets: list[OrderTicketCreate]) -> list[OrderTicketCreate]:
+def _reject_duplicate_seats(event_seat_ids: list[int]) -> list[int]:
     """A seat is bought once per order - the partial unique index on
     (order_id, event_seat_id) says the same thing at the database."""
-    seat_ids = [ticket.event_seat_id for ticket in tickets]
-    if len(seat_ids) != len(set(seat_ids)):
-        raise ValueError("duplicate event_seat_id in tickets")
-    return tickets
+    if len(event_seat_ids) != len(set(event_seat_ids)):
+        raise ValueError("duplicate event_seat_id in event_seat_ids")
+    return event_seat_ids
 
 
-OrderTickets = Annotated[list[OrderTicketCreate], AfterValidator(_reject_duplicate_seats)]
+EventSeatIds = Annotated[list[int], AfterValidator(_reject_duplicate_seats)]
 
 
 class OrderCreate(SQLModel):
     """POST /orders.
+
+    The request says *which* seats; the backend says what they cost and how
+    long the hold lasts. Neither the ticket prices nor payment_deadline are
+    accepted from the client: the price is read from the event zone at
+    creation time (OrderCalculator), and a client-supplied deadline would let
+    the caller hold seats for as long as it liked.
+
+    The price is still snapshotted onto every OrderTicket row rather than
+    looked up again later, so a zone repriced after the order was placed
+    cannot retroactively change what the customer agreed to pay.
 
     An empty order is rejected at the boundary rather than by a rule: it is a
     malformed request, not a business-rule violation, so it earns a 422.
     """
     user_id: int
     event_id: int
-    checkout_amount: int = Field(ge=0, description="結帳金額")
-    payment_deadline: UtcDatetime | None = None
     comment: str | None = Field(default=None, max_length=500)
-    tickets: OrderTickets = Field(min_length=1)
+    event_seat_ids: EventSeatIds = Field(min_length=1)
 
 # --------------------------------------------------------------------------- #
 # Requests - OrderPay
@@ -112,12 +108,34 @@ class OrderDetailResponse(OrderResponse):
 
 # --------------------------------------------------------------------------- #
 # Internal transport (Repository -> Service)
+#
+# The event state and seat prices an order is judged against are the Event
+# aggregate's to publish, so they live in schemas/event.py - see
+# EventStateInternal and EventSeatPriceInternal.
 # --------------------------------------------------------------------------- #
+class OrderTicketPricingInternal(SQLModel):
+    """What one ticket will be written at."""
+    event_seat_id: int
+    amount: int
+
+
+class OrderPricingInternal(SQLModel):
+    """Everything OrderCalculator decides about a new order.
+
+    payment_deadline is not optional here even though the column is: an order
+    created through this flow always carries a hold window. NULL is reserved
+    for rows created before the window existed.
+    """
+    tickets: list[OrderTicketPricingInternal]
+    checkout_amount: int
+    payment_deadline: datetime
+
+
 class OrderStateInternal(SQLModel):
     """Everything the rules need to judge an order, and nothing else.
 
     The aggregate hands this to OrderValidator instead of itself, for the same
-    reason EventAggregate hands over EventStatusInternal: a rule that can only
+    reason EventAggregate hands over EventStateInternal: a rule that can only
     be exercised by constructing an aggregate needs a database to unit-test.
     """
     id: int

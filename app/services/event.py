@@ -86,7 +86,7 @@ class EventService:
         unpublish first, rather than being sent to fix dates it cannot change.
         """
         async with self._repository.load_for_update(event_id) as event_aggr:
-            self._validator.validate_unpublished(event_aggr.status)
+            self._validator.validate_unpublished(event_aggr.state)
             self._validator.validate_holding_time(payload)
             await event_aggr.set_holding_time(payload)
             return self._mapper.to_event(event_aggr.event)

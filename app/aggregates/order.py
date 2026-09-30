@@ -8,6 +8,10 @@ The aggregate carries no business rules - it only exposes the state the rules
 need (always as `*Internal` DTOs, never ORM rows) and applies the mutations a
 use case asks for. Judgement stays in OrderValidator.
 
+The create flow has rules to check before there is an order to check them
+against, so it goes through a factory instead: see
+app/aggregates/order_factory.py.
+
 CONCURRENCY CONTRACT
 --------------------
 The admin paths on the event side take `FOR UPDATE` on the event row. This
@@ -19,22 +23,49 @@ Shared locks do not block each other, so ticket grabbing stays concurrent.
 EAGER LOADING
 -------------
 Every relationship on the models is declared `lazy="raise"`. Reading
-`order.tickets` therefore only works when the repository loaded it, which it
-does through TICKET_DETAIL_LOADER in OrderRepository. That is deliberate:
-a lazy load here would fire a query from outside the greenlet that owns the
-connection and surface as MissingGreenlet somewhere unrelated.
+`order.tickets` therefore only works when it was loaded through
+TICKET_DETAIL_LOADER below. That is deliberate: a lazy load here would fire a
+query from outside the greenlet that owns the connection and surface as
+MissingGreenlet somewhere unrelated.
 """
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.enums import OrderStatus, PaymentStatus
 from app.libs.clock.functional import now_utc
-from app.models import Order
+from app.models import EventSeat, Order, OrderTicket
 from app.schemas.order import (
     OrderDelete,
     OrderPay,
     OrderStateInternal,
     OrderTicketInternal,
     OrderWithTicketsInternal,
+)
+
+
+# Every relationship is lazy="raise", so a detail read has to spell out the
+# whole chain it intends to walk: order -> tickets -> seat -> zone. Named once
+# here so every entry point that returns an order detail walks the same one.
+#
+# The tickets hop is the only one that filters and the only one loaded by a
+# second SELECT. Both follow from it being the only collection in the chain:
+#   - Filtering it shortens a list. A released ticket has to stay out of the
+#     detail response, and the predicate is also what lets Postgres use
+#     uq_order_ticket, whose index is partial on `deleted_at IS NULL`. The same
+#     filter on either seat hop would resolve to None instead of a short list
+#     and break the walk in OrderAggregate.tickets().
+#   - joinedload on it would repeat the order row once per ticket. The two seat
+#     hops are many-to-one, so they join without multiplying rows.
+#
+# The seat hops stay outer joins even though NOT NULL plus the foreign key make
+# an inner join return the same rows today. The point is what happens if that
+# stops holding: an outer join leaves event_seat as None and crashes
+# OrderAggregate.tickets(), where an inner join would drop the ticket and leave
+# the detail response quietly short of what the customer paid for.
+TICKET_DETAIL_LOADER = (
+    selectinload(Order.tickets.and_(OrderTicket.deleted_at == None))
+    .joinedload(OrderTicket.event_seat)
+    .joinedload(EventSeat.event_zone)
 )
 
 
@@ -176,3 +207,4 @@ class OrderAggregate:
         self._session.add(instance)
         await self._session.flush()
         await self._session.refresh(instance)
+

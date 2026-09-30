@@ -1,28 +1,34 @@
-"""Fake aggregate, repository and layout cache for service-level unit tests.
+"""Fake aggregates, repositories and layout cache for service-level unit tests.
 
 All three share one `calls` list, so a test can assert on the exact sequence of
 things a use case did - including what it did *not* do after a rule failed, and
 how a Redis write interleaves with the database writes around it.
 """
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from redis import RedisError
 
 from app.libs.clock.functional import now_utc
-from app.models import Event, EventZone
+from app.models import Event, EventZone, Order
 from app.schemas import Page
-from app.enums import SeatStatus
+from app.enums import OrderStatus, PaymentStatus, SeatStatus
 from app.schemas.event import (
     EventLayoutInternal,
     EventLayoutSummaryInternal,
     EventOrderStatsInternal,
     EventSeatInternal,
     EventSeatSyncCountsInternal,
-    EventStatusInternal,
+    EventStateInternal,
     EventZoneInternal,
     EventZoneWithSeatCountInternal,
+    EventSeatPriceInternal,
     EventZoneWithSeatInternal,
+)
+from app.schemas.order import (
+    OrderPricingInternal,
+    OrderTicketInternal,
+    OrderWithTicketsInternal,
 )
 
 START = now_utc() + timedelta(days=30)
@@ -81,8 +87,12 @@ class FakeAggregate:
         return self._event
 
     @property
-    def status(self) -> EventStatusInternal:
-        return EventStatusInternal(id=self._event.id, is_active=self._event.is_active)
+    def state(self) -> EventStateInternal:
+        return EventStateInternal(
+            id=self._event.id,
+            is_active=self._event.is_active,
+            start_at=self._event.start_at,
+        )
 
     async def layout(self) -> EventLayoutSummaryInternal:
         self.calls.append("layout")
@@ -210,3 +220,122 @@ class FakeEventLayoutCache:
         if self._fail:
             raise RedisError("fake redis is down")
         self.cleared.append((event_id, zone_ids))
+
+
+# --------------------------------------------------------------------------- #
+# Order side
+# --------------------------------------------------------------------------- #
+def a_seat_price(
+    event_seat_id: int, price: int | None = 1500, event_zone_id: int = 10
+) -> EventSeatPriceInternal:
+    return EventSeatPriceInternal(
+        event_seat_id=event_seat_id, event_zone_id=event_zone_id, price=price
+    )
+
+
+def an_order(pricing: OrderPricingInternal) -> Order:
+    """The row the factory's create() would have written for this pricing."""
+    return Order(
+        id=1,
+        user_id=1,
+        event_id=1,
+        checkout_amount=pricing.checkout_amount,
+        status=OrderStatus.PENDING,
+        payment_status=PaymentStatus.PENDING,
+        payment_deadline=pricing.payment_deadline,
+        comment=None,
+        created_at=START,
+        updated_at=START,
+        deleted_at=None,
+    )
+
+
+class FakeOrderAggregate:
+    """What place() hands back: only what the mapper reads off it."""
+
+    def __init__(self, calls: list[str], pricing: OrderPricingInternal):
+        self.calls = calls
+        self.pricing = pricing
+        self.order = an_order(pricing)
+
+    def with_tickets(self) -> OrderWithTicketsInternal:
+        self.calls.append("with_tickets")
+        return OrderWithTicketsInternal(
+            order=self.order,
+            tickets=[
+                OrderTicketInternal(
+                    id=index,
+                    created_at=START,
+                    updated_at=START,
+                    event_seat_id=ticket.event_seat_id,
+                    event_zone_id=10,
+                    zone_name="A",
+                    row=1,
+                    col=index,
+                    serial_number=index,
+                    amount=ticket.amount,
+                )
+                for index, ticket in enumerate(self.pricing.tickets)
+            ],
+        )
+
+
+class FakeOrderAggregateFactory:
+    """Stands in for the real factory: the pre-insert half of the create flow.
+
+    `seats` is what the database would have resolved, so a test can drop a seat
+    from it to say "this seat does not belong to the event" without needing one.
+    """
+
+    def __init__(
+        self,
+        calls: list[str],
+        event: Event,
+        seats: list[EventSeatPriceInternal],
+    ):
+        self.calls = calls
+        self._event = event
+        self._seats = seats
+        self.created: OrderPricingInternal | None = None
+
+    @property
+    def event_state(self) -> EventStateInternal:
+        return EventStateInternal(
+            id=self._event.id,
+            is_active=self._event.is_active,
+            start_at=self._event.start_at,
+        )
+
+    async def seat_prices(self) -> list[EventSeatPriceInternal]:
+        self.calls.append("seat_prices")
+        return self._seats
+
+    async def create(self, pricing: OrderPricingInternal) -> FakeOrderAggregate:
+        self.calls.append("create")
+        self.created = pricing
+        return FakeOrderAggregate(self.calls, pricing)
+
+
+class FakeOrderRepository:
+    """Hands out a FakeOrderAggregateFactory through the same context-manager API."""
+
+    def __init__(
+        self,
+        is_active: bool = True,
+        start_at: datetime | None = None,
+        seats: list[EventSeatPriceInternal] | None = None,
+    ):
+        self.calls: list[str] = []
+        event = an_event(is_active)
+        if start_at is not None:
+            event.start_at = start_at
+        self.factory = FakeOrderAggregateFactory(
+            self.calls,
+            event,
+            seats if seats is not None else [a_seat_price(1), a_seat_price(2, 800)],
+        )
+
+    @asynccontextmanager
+    async def load_for_create(self, payload):
+        self.calls.append("load_for_create")
+        yield self.factory

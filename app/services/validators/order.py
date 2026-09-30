@@ -10,13 +10,19 @@ from datetime import datetime
 
 from app.enums import OrderStatus, PaymentStatus
 from app.exceptions import (
+    EVENT_SEAT_NOT_FOUND_MSG,
+    EntityNotFoundError,
+    EventNotPublishedError,
+    EventStartedError,
     OrderNotCancellableError,
     OrderNotDeletableError,
     OrderNotPayableError,
     PaymentDeadlinePassedError,
+    TicketPriceNotReadyError,
 )
 from app.libs.clock.functional import now_utc
-from app.schemas.order import OrderCreate, OrderStateInternal
+from app.schemas.event import EventSeatPriceInternal, EventStateInternal
+from app.schemas.order import OrderStateInternal
 
 
 class OrderValidator:
@@ -25,33 +31,69 @@ class OrderValidator:
     def __init__(self, clock: Callable[[], datetime] = now_utc):
         self._now = clock
 
-    def validate_create_order(self, payload: OrderCreate) -> None:
-        """Rules decidable from the payload alone.
+    def validate_event_orderable(self, state: EventStateInternal) -> None:
+        """flow: published -> not started yet.
 
-        Shape rules - a non-empty ticket list, no repeated seat - live in
+        Publication is checked first: an unpublished event is not a sale that
+        closed, it is a sale that never opened, and telling the caller it has
+        already started would be a lie.
+
+        Sales close at start_at rather than end_at. A seat sold after the doors
+        open is one the customer cannot use, and the ten-minute hold would
+        outlive the moment it was bought for.
+        """
+        if not state.is_active:
+            raise EventNotPublishedError(
+                f"Event {state.id} is not published and cannot be ordered from"
+            )
+
+        now = self._now()
+        if state.start_at <= now:
+            raise EventStartedError(
+                f"Event {state.id} started at {state.start_at.isoformat()}; "
+                f"sales closed before now {now.isoformat()}"
+            )
+
+    @staticmethod
+    def validate_seats_orderable(
+        event_id: int,
+        event_seat_ids: list[int],
+        seats: list[EventSeatPriceInternal],
+    ) -> None:
+        """Every requested seat belongs to this event and carries a price.
+
+        Shape rules - a non-empty seat list, no repeated seat - live in
         OrderCreate as schema constraints, so a malformed request earns a 422
         at the boundary instead of a 409 from in here.
 
-        TODO: the "event has not ended and is still on sale" rule needs event
-        state, which this class must not fetch. It belongs in a sibling method
-        taking an *Internal DTO, with OrderService reading the event through
-        EventRepository and passing it in - the same shape as
-        validate_publishable on the event side.
+        `seats` is what the aggregate could resolve, so a seat missing from it
+        is one that does not exist, was soft-deleted, or belongs to another
+        event. All three are the caller naming something that is not there, so
+        all three come back as a 404 rather than a rule violation.
+
+        An unpriced zone should be unreachable - publishing rejects one, and a
+        published event cannot gain a zone - but the rule is stated anyway: the
+        alternative is the calculator meeting a NULL price and either crashing
+        or quietly selling a seat for nothing.
+
+        Whether somebody else is already holding the seat is NOT decided here.
+        That lives in Redis and is checked by OrderService before it prices the
+        order.
         """
-        expected = sum(ticket.amount for ticket in payload.tickets)
-        if payload.checkout_amount != expected:
-            raise OrderNotPayableError(
-                f"checkout_amount {payload.checkout_amount} does not match the "
-                f"ticket total {expected}"
+        resolved = {seat.event_seat_id for seat in seats}
+        missing = [seat_id for seat_id in event_seat_ids if seat_id not in resolved]
+        if missing:
+            raise EntityNotFoundError(
+                EVENT_SEAT_NOT_FOUND_MSG.format(
+                    event_seat_ids=missing, event_id=event_id
+                )
             )
 
-        if payload.payment_deadline is not None:
-            now = self._now()
-            if payload.payment_deadline <= now:
-                raise PaymentDeadlinePassedError(
-                    f"payment_deadline {payload.payment_deadline.isoformat()} "
-                    f"must be later than now {now.isoformat()}"
-                )
+        unpriced = sorted({seat.event_zone_id for seat in seats if seat.price is None})
+        if unpriced:
+            raise TicketPriceNotReadyError(
+                f"Ticket price is not set for event zone(s): {unpriced}"
+            )
 
     def validate_payable(self, state: OrderStateInternal) -> None:
         """flow: not cancelled -> not already settled -> no charge in flight

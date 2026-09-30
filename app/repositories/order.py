@@ -2,8 +2,11 @@
 
 Instead of exposing one method per query, this hands out an OrderAggregate that
 already owns a transaction: a use case enters it once, checks its rules and
-writes, and everything commits together. See app/aggregates/order.py for the
-concurrency contract behind create() and load_for_update().
+writes, and everything commits together. load_for_create() hands out an
+OrderAggregateFactory instead, since the order row does not exist yet - and is
+named like load_for_update(), which does not update either: both load what the
+use case needs and lock it, and neither performs the operation it is named for.
+See app/aggregates/order.py for the concurrency contract behind them.
 
 Only genuinely collection-level queries stay here - ones that do not belong to
 any single aggregate instance.
@@ -12,44 +15,20 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import joinedload, selectinload
 from sqlmodel import select
 
-from app.aggregates.order import OrderAggregate
+from app.aggregates.event import EventAggregate
+from app.aggregates.order import TICKET_DETAIL_LOADER, OrderAggregate
+from app.aggregates.order_factory import OrderAggregateFactory
 from app.exceptions import (
     EVENT_NOT_FOUND_MSG,
     ORDER_NOT_FOUND_MSG,
     EntityNotFoundError,
 )
-from app.models import Event, EventSeat, Order, OrderTicket
+from app.models import Event, Order
 from app.repositories._pagination import paginate
 from app.schemas import Page, PaginationParams
 from app.schemas.order import OrderCreate
-
-# Every relationship is lazy="raise", so a detail read has to spell out the
-# whole chain it intends to walk: order -> tickets -> seat -> zone. Named once
-# here so the three entry points cannot drift apart.
-#
-# The tickets hop is the only one that filters and the only one loaded by a
-# second SELECT. Both follow from it being the only collection in the chain:
-#   - Filtering it shortens a list. A released ticket has to stay out of the
-#     detail response, and the predicate is also what lets Postgres use
-#     uq_order_ticket, whose index is partial on `deleted_at IS NULL`. The same
-#     filter on either seat hop would resolve to None instead of a short list
-#     and break the walk in OrderAggregate.tickets().
-#   - joinedload on it would repeat the order row once per ticket. The two seat
-#     hops are many-to-one, so they join without multiplying rows.
-#
-# The seat hops stay outer joins even though NOT NULL plus the foreign key make
-# an inner join return the same rows today. The point is what happens if that
-# stops holding: an outer join leaves event_seat as None and crashes
-# OrderAggregate.tickets(), where an inner join would drop the ticket and leave
-# the detail response quietly short of what the customer paid for.
-TICKET_DETAIL_LOADER = (
-    selectinload(Order.tickets.and_(OrderTicket.deleted_at == None))
-    .joinedload(OrderTicket.event_seat)
-    .joinedload(EventSeat.event_zone)
-)
 
 
 class OrderRepository:
@@ -95,10 +74,22 @@ class OrderRepository:
                 raise
 
     @asynccontextmanager
-    async def create(self, payload: OrderCreate) -> AsyncIterator[OrderAggregate]:
-        """Creates a pending order with its tickets, inside one transaction.
+    async def load_for_create(
+        self, payload: OrderCreate
+    ) -> AsyncIterator[OrderAggregateFactory]:
+        """Loads the event a new order will hang off, locked, inside the write
+        transaction, and hands out the factory that can write the order.
 
-        Takes `FOR SHARE` on the event row before writing anything. This is the
+        Nothing is inserted until the use case calls create() on it. The
+        rules that decide whether the order may exist at all - is the event on
+        sale, do the seats belong to it, what do they cost - need rows this
+        transaction has to read first, and reading them anywhere else would
+        leave a window for the event to change underneath the insert.
+
+        Those reads stay the Event aggregate's: the locked row is wrapped in an
+        EventAggregate over this same session, and the factory forwards to it.
+
+        Takes `FOR SHARE` on the event row before any of that. This is the
         booking half of the contract documented in app/aggregates/event.py:
         shared locks do not block each other, so ticket grabbing stays fully
         concurrent, while an admin unpublishing or deleting the event waits on
@@ -110,33 +101,9 @@ class OrderRepository:
         """
         async with self.session_factory() as session:
             try:
-                await self._lock_event_for_share(session, payload.event_id)
-
-                order = Order(
-                    user_id=payload.user_id,
-                    event_id=payload.event_id,
-                    checkout_amount=payload.checkout_amount,
-                    payment_deadline=payload.payment_deadline,
-                    comment=payload.comment,
-                )
-                session.add(order)
-                await session.flush()
-
-                session.add_all([
-                    OrderTicket(
-                        order_id=order.id,
-                        event_seat_id=ticket.event_seat_id,
-                        amount=ticket.amount,
-                    )
-                    for ticket in payload.tickets
-                ])
-                await session.flush()
-
-                # Re-read through the loader chain: the tickets were just
-                # inserted, but `order.tickets` is lazy="raise" and would not
-                # pick them up on its own.
-                yield OrderAggregate(
-                    session, await self._get_and_check_order(session, order.id)
+                event = await self._lock_event_for_share(session, payload.event_id)
+                yield OrderAggregateFactory(
+                    session, EventAggregate(session, event), payload
                 )
                 await session.commit()
             except BaseException:
@@ -181,8 +148,13 @@ class OrderRepository:
         return order
 
     @staticmethod
-    async def _lock_event_for_share(session: AsyncSession, event_id: int) -> None:
-        """Takes `FOR SHARE` on the event row and asserts it is still live."""
+    async def _lock_event_for_share(session: AsyncSession, event_id: int) -> Event:
+        """Takes `FOR SHARE` on the event row and asserts it is still live.
+
+        The locked row is returned rather than discarded: the ordering rules
+        judge the event on it, and re-reading it would drop the guarantee that
+        what they judged is what the lock is holding.
+        """
         event = await session.scalar(
             select(Event)
             .where(Event.id == event_id)
@@ -191,3 +163,4 @@ class OrderRepository:
         )
         if not event:
             raise EntityNotFoundError(EVENT_NOT_FOUND_MSG.format(event_id=event_id))
+        return event
