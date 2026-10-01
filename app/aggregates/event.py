@@ -25,6 +25,8 @@ from collections.abc import Sequence
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from sqlalchemy.sql import Select
 from sqlmodel import select
 
 from app.enums import SeatStatus
@@ -84,73 +86,49 @@ class EventAggregate:
 
     async def event_zones(self) -> list[EventZoneInternal]:
         """Every existing zone's price, used by the publish rule."""
-        rows = await self._session.execute(
-            select(EventZone)
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
-        )
+        rows = await self._session.execute(self._existing_zones_stmt(self._event.id))
         return [
-            EventZoneInternal(id=row.id, name=row.name, price=row.price)
-            for row in rows.all()
+            EventZoneInternal(id=zone.id, name=zone.name, price=zone.price)
+            for zone in rows.scalars().all()
         ]
 
     async def event_layout(self) -> EventLayoutInternal:
         """Every zone and seat that still exists - the publish-time snapshot.
 
-        Two filters carry weight here. Soft-deleted seats are excluded, or a
-        retired seat would be handed a bit in the existence bitmap. And the
-        join is an OUTER join, so a zone with no seats still comes back: the
-        publish rule prices every zone it is shown, and an empty zone silently
-        dropped here would be an unpriced zone that never blocks a publish.
+        Soft-deleted seats are filtered out as they load, or a retired seat
+        would be handed a bit in the existence bitmap.
         """
         rows = await self._session.execute(
-            select(EventZone, EventSeat)
-            .outerjoin(
-                EventSeat,
-                (EventSeat.event_zone_id == EventZone.id) & (EventSeat.deleted_at == None),
-            )
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
-            .order_by(EventZone.name, EventSeat.serial_number)
+            self._zones_with_seats_stmt(self._event.id)
+        )
+        zones = rows.scalars().all()
+
+        return EventLayoutInternal(
+            event=self._event,
+            zones=[
+                EventZoneWithSeatInternal(
+                    id=zone.id,
+                    name=zone.name,
+                    price=zone.price,
+                    seats=[
+                        EventSeatInternal(
+                            id=seat.id,
+                            row=seat.row,
+                            col=seat.col,
+                            status=seat.status,
+                            serial_number=seat.serial_number,
+                        )
+                        for seat in zone.event_seats
+                    ],
+                )
+                for zone in zones
+            ],
         )
 
-        zones: dict[int, EventZoneWithSeatInternal] = {}
-        for zone, seat in rows.all():
-            entry = zones.get(zone.id)
-            if entry is None:
-                entry = EventZoneWithSeatInternal(
-                    id=zone.id, name=zone.name, price=zone.price, seats=[]
-                )
-                zones[zone.id] = entry
-            if seat is not None:
-                entry.seats.append(
-                    EventSeatInternal(
-                        id=seat.id,
-                        row=seat.row,
-                        col=seat.col,
-                        status=seat.status,
-                        serial_number=seat.serial_number,
-                    )
-                )
-
-        return EventLayoutInternal(event=self._event, zones=list(zones.values()))
-
     async def zone_ids(self) -> list[int]:
-        """Existing zone ids - what the cache needs to build its keys.
-
-        Deliberately not `event_layout()`: that one joins in every seat, and a
-        10k-seat event should not drag all of them through Python just to
-        produce a handful of Redis keys.
-
-        Selecting the bare primary key is the one column-level projection the
-        repo allows (see .claude/hooks/check_column_queries.py): there is no
-        projection shape here to drift, and list[int] is a more honest return
-        type than a batch of entities loaded only to read one attribute off.
-        """
+        """Existing zone ids - what the cache needs to build its keys."""
         rows = await self._session.execute(
-            select(EventZone.id)
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
+            self._existing_zones_stmt(self._event.id).with_only_columns(EventZone.id)
         )
         return list(rows.scalars().all())
 
@@ -175,28 +153,25 @@ class EventAggregate:
         the result is the signal; OrderValidator turns that into the 404.
         """
         rows = await self._session.execute(
-            select(EventSeat, EventZone)
-            .join(EventZone, EventZone.id == EventSeat.event_zone_id)
+            self._existing_zones_stmt(self._event.id)
+            .add_columns(EventSeat)
+            .join(EventSeat, EventSeat.event_zone_id == EventZone.id)
             .where(EventSeat.id.in_(event_seat_ids))
             .where(EventSeat.deleted_at == None)
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
         )
         return [
             EventSeatPriceInternal(
                 event_seat_id=seat.id, event_zone_id=zone.id, price=zone.price
             )
-            for seat, zone in rows.all()
+            for zone, seat in rows.all()
         ]
 
     async def occupied_seat_count(self, event_zone_id: int) -> int:
         await self._get_and_check_zone(event_zone_id)
         total = await self._session.scalar(
-            select(func.count())
-            .select_from(EventSeat)
-            .where(EventSeat.event_zone_id == event_zone_id)
-            .where(EventSeat.deleted_at == None)
+            self._existing_seats_stmt(event_zone_id)
             .where(EventSeat.status == OCCUPIED_SEAT_STATUS)
+            .with_only_columns(func.count())
         )
         return total or 0
 
@@ -206,13 +181,12 @@ class EventAggregate:
     async def layout(self) -> EventLayoutSummaryInternal:
         """The event with its zones and per-zone seat counts."""
         rows = await self._session.execute(
-            select(EventZone, func.count(EventSeat.id))
+            self._existing_zones_stmt(self._event.id)
+            .add_columns(func.count(EventSeat.id))
             .outerjoin(
                 EventSeat,
                 (EventSeat.event_zone_id == EventZone.id) & (EventSeat.deleted_at == None),
             )
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
             .group_by(EventZone.id)
             .order_by(EventZone.name)
         )
@@ -229,11 +203,8 @@ class EventAggregate:
     ) -> Page[EventSeat]:
         """One page of a zone's existing seats, ordered by serial_number."""
         await self._get_and_check_zone(event_zone_id)
-        stmt = (
-            select(EventSeat)
-            .where(EventSeat.event_zone_id == event_zone_id)
-            .where(EventSeat.deleted_at == None)
-            .order_by(EventSeat.serial_number)
+        stmt = self._existing_seats_stmt(event_zone_id).order_by(
+            EventSeat.serial_number
         )
         return await paginate(self._session, stmt, pagination, EventSeat)
 
@@ -356,11 +327,7 @@ class EventAggregate:
         """
         await self._get_and_check_zone(event_zone_id)
         existing = (
-            await self._session.execute(
-                select(EventSeat)
-                .where(EventSeat.event_zone_id == event_zone_id)
-                .where(EventSeat.deleted_at == None)
-            )
+            await self._session.execute(self._existing_seats_stmt(event_zone_id))
         ).scalars().all()
 
         diff = self._diff_layout(seats, existing)
@@ -425,10 +392,7 @@ class EventAggregate:
     async def _get_and_check_zone(self, event_zone_id: int) -> EventZone:
         """Fetches a zone and asserts it belongs to this event."""
         zone = await self._session.scalar(
-            select(EventZone)
-            .where(EventZone.id == event_zone_id)
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
+            self._existing_zones_stmt(self._event.id).where(EventZone.id == event_zone_id)
         )
         if not zone:
             raise EntityNotFoundError(
@@ -440,10 +404,7 @@ class EventAggregate:
 
     async def _count_existing_seats(self, event_zone_id: int) -> int:
         total = await self._session.scalar(
-            select(func.count())
-            .select_from(EventSeat)
-            .where(EventSeat.event_zone_id == event_zone_id)
-            .where(EventSeat.deleted_at == None)
+            self._existing_seats_stmt(event_zone_id).with_only_columns(func.count())
         )
         return total or 0
 
@@ -460,3 +421,36 @@ class EventAggregate:
             )
         )
         return 0 if current_max is None else current_max + 1
+
+    # ----------------------------------------------------------------------- #
+    # Statements
+    # ----------------------------------------------------------------------- #
+    @staticmethod
+    def _existing_zones_stmt(event_id: int) -> Select:
+        return (
+            select(EventZone)
+            .where(EventZone.event_id == event_id)
+            .where(EventZone.deleted_at == None)
+        )
+
+    @staticmethod
+    def _existing_seats_stmt(event_zone_id: int) -> Select:
+        return (
+            select(EventSeat)
+            .where(EventSeat.event_zone_id == event_zone_id)
+            .where(EventSeat.deleted_at == None)
+        )
+
+    @staticmethod
+    def _zones_with_seats_stmt(event_id: int) -> Select:
+        """Seats arrive in a second SELECT, so a zone with none still comes
+        back - the publish rule prices every zone it is shown."""
+        return (
+            select(EventZone)
+            .where(EventZone.event_id == event_id)
+            .where(EventZone.deleted_at == None)
+            .options(
+                selectinload(EventZone.event_seats.and_(EventSeat.deleted_at == None))
+            )
+            .order_by(EventZone.name)
+        )
