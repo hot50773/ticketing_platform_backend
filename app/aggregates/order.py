@@ -98,12 +98,12 @@ class OrderAggregate:
     # Reads
     # ----------------------------------------------------------------------- #
     def tickets(self) -> list[OrderTicketInternal]:
-        """The order's live tickets with their seat coordinates resolved.
+        """The order's existing tickets with their seat coordinates resolved.
 
-        "Live" is TICKET_DETAIL_LOADER's doing, not this method's - it filters
-        the tickets hop on deleted_at, so a released ticket never reaches the
-        collection. Filtering again here would duplicate the rule and let the
-        two copies drift.
+        "Existing" is TICKET_DETAIL_LOADER's doing, not this method's - it
+        filters the tickets hop on deleted_at, so a released ticket never
+        reaches the collection. Filtering again here would duplicate the rule
+        and let the two copies drift.
 
         Synchronous on purpose: the rows are already in the session from the
         repository's eager load, so there is nothing to await. Walking
@@ -160,7 +160,7 @@ class OrderAggregate:
     async def mark_as_payment_fail(self) -> None:
         """Releases the in-flight claim after a failed or abandoned charge.
 
-        status stays PENDING: the order is still live and the customer may
+        status stays PENDING: the order is still active and the customer may
         retry until payment_deadline passes.
         """
         self._order.payment_status = PaymentStatus.FAILED
@@ -172,12 +172,12 @@ class OrderAggregate:
         self._order.status = OrderStatus.CANCELLED
         await self._apply(self._order)
 
-    async def soft_delete(self, payload: OrderDelete) -> None:
+    async def soft_delete_cascade(self, payload: OrderDelete) -> None:
         """Soft-deletes the order and its tickets.
 
         Tickets go too, because the partial unique index on
         (order_id, event_seat_id) only ignores soft-deleted rows: leaving them
-        live would keep the seats occupied by an order that no longer exists.
+        in place would keep the seats occupied by an order that no longer exists.
 
         This is what releases an expired cart. Only soft-deleted orders stop
         blocking an event from being unpublished - see

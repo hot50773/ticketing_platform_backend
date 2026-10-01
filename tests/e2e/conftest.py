@@ -135,7 +135,7 @@ async def seeded_event(container: Container, seeded_venue_and_seats: dict) -> di
 
 @pytest.fixture
 def place_order(container: Container):
-    """Inserts an order for an event, so the "no live order" rule can be exercised."""
+    """Inserts an order for an event, so the "no active order" rule can be exercised."""
 
     async def _place(event_id: int, user_id: int, soft_deleted: bool = False,
                      status: OrderStatus = OrderStatus.PENDING) -> int:

@@ -134,7 +134,7 @@ class OrderRepository:
 
     @staticmethod
     async def _lock_event_for_share(session: AsyncSession, event_id: int) -> Event:
-        """Takes `FOR SHARE` on the event row and asserts it is still live.
+        """Takes `FOR SHARE` on the event row and asserts it still exists.
 
         Returns the locked row rather than discarding it - re-reading would
         drop the guarantee that what the rules judged is what the lock holds.

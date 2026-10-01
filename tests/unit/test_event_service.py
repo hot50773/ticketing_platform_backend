@@ -86,7 +86,7 @@ async def test_delete_reads_and_writes_in_the_same_transaction():
     await a_service(repo).delete_event(1)
 
     assert repo.calls == [
-        "load_for_update", "order_stats", "zone_ids", "soft_delete", "clear_event_layouts",
+        "load_for_update", "order_stats", "soft_delete_cascade", "clear_event_layouts",
     ]
 
 
@@ -97,7 +97,7 @@ async def test_delete_does_not_write_when_an_order_exists():
     with pytest.raises(ActiveOrdersExistError):
         await a_service(repo).delete_event(1)
 
-    assert "soft_delete" not in repo.calls
+    assert "soft_delete_cascade" not in repo.calls
 
 
 @pytest.mark.asyncio
@@ -186,19 +186,8 @@ async def test_delete_clears_the_bitmap_only_after_it_writes():
     cache = FakeEventLayoutCache(repo.calls)
     await a_service(repo, cache).delete_event(1)
 
-    assert repo.calls.index("soft_delete") < repo.calls.index("clear_event_layouts")
+    assert repo.calls.index("soft_delete_cascade") < repo.calls.index("clear_event_layouts")
     assert cache.cleared == [(1, [10])]
-
-
-@pytest.mark.asyncio
-async def test_unpublish_reads_zone_ids_before_it_writes():
-    """delete_event soft-deletes the zones, so the ids have to be captured
-    while they are still live - otherwise the cache is handed an empty list
-    and the bitmaps are never dropped."""
-    repo = FakeEventRepository()
-    await a_service(repo).delete_event(1)
-
-    assert repo.calls.index("zone_ids") < repo.calls.index("soft_delete")
 
 
 @pytest.mark.asyncio

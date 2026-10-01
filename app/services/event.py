@@ -108,7 +108,7 @@ class EventService:
             return self._mapper.to_event(event_aggr.event)
 
     async def unpublish_event(self, event_id: int) -> EventResponse:
-        """flow: assert no live order -> take off sale -> drop the bitmaps.
+        """flow: assert no active order -> take off sale -> drop the bitmaps.
 
         The cache is cleared *after* the transaction commits, the mirror image
         of publish_event. Dropping a still-live event's bitmap would make every
@@ -116,7 +116,7 @@ class EventService:
         certainly off sale; a bitmap left behind by a failed clear is inert.
         """
         async with self._repository.load_for_update(event_id) as event_aggr:
-            self._validator.validate_no_live_order(await event_aggr.order_stats())
+            self._validator.validate_no_active_order(await event_aggr.order_stats())
             zone_ids = await event_aggr.zone_ids()
             await event_aggr.unpublish()
             response = self._mapper.to_event(event_aggr.event)
@@ -125,15 +125,14 @@ class EventService:
         return response
 
     async def delete_event(self, event_id: int) -> None:
-        """flow: assert no live order -> soft-delete event + zones + seats ->
+        """flow: assert no active order -> soft-delete event + zones + seats ->
         drop the bitmaps. Cleared after the commit, as in unpublish_event.
 
-        zone_ids is read before the soft-delete: afterwards every zone carries
-        a deleted_at and the query that builds the keys would come back empty.
+        The delete hands back the zone ids it removed; querying for them
+        afterwards would come back empty.
         """
         async with self._repository.load_for_update(event_id) as event_aggr:
-            self._validator.validate_no_live_order(await event_aggr.order_stats())
-            zone_ids = await event_aggr.zone_ids()
-            await event_aggr.soft_delete()
+            self._validator.validate_no_active_order(await event_aggr.order_stats())
+            zone_ids = await event_aggr.soft_delete_cascade()
 
         await self._cache.clear_event_layouts(event_id, zone_ids)

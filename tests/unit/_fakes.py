@@ -140,8 +140,9 @@ class FakeAggregate:
     async def unpublish(self) -> None:
         self.calls.append("unpublish")
 
-    async def soft_delete(self) -> None:
-        self.calls.append("soft_delete")
+    async def soft_delete_cascade(self) -> list[int]:
+        self.calls.append("soft_delete_cascade")
+        return [10]
 
     async def add_zone(self, payload) -> EventZoneWithSeatCountInternal:
         self.calls.append("add_zone")

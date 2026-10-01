@@ -130,13 +130,13 @@ def test_not_publishable_without_any_zone(validator):
 
 
 # --------------------------------------------------------------------------- #
-# D. validate_no_live_order
+# D. validate_no_active_order
 # --------------------------------------------------------------------------- #
 def test_no_live_order_passes(validator):
-    validator.validate_no_live_order(EventOrderStatsInternal(active_order_count=0))
+    validator.validate_no_active_order(EventOrderStatsInternal(active_order_count=0))
 
 
 def test_live_order_blocks_the_operation(validator):
     with pytest.raises(ActiveOrdersExistError) as exc:
-        validator.validate_no_live_order(EventOrderStatsInternal(active_order_count=3))
+        validator.validate_no_active_order(EventOrderStatsInternal(active_order_count=3))
     assert "3" in str(exc.value)

@@ -135,7 +135,7 @@ class OrderService:
         """
         async with self._repository.load_for_update(order_id) as order_aggr:
             self._validator.validate_deletable(order_aggr.state)
-            await order_aggr.soft_delete(payload)
+            await order_aggr.soft_delete_cascade(payload)
 
     async def execute_payment(self, order_id: int, payload: OrderPay) -> OrderResponse:
         """flow: claim -> charge -> settle, as three separate transactions.

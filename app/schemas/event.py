@@ -235,6 +235,13 @@ class EventOrderStatsInternal(SQLModel):
     active_order_count: int
 
 
+class EventSeatDiffInternal(SQLModel):
+    """What a layout replacement has to change. A seat that keeps its position
+    appears in neither list - it is never renumbered or rewritten."""
+    added: list[EventSeatLayout]
+    retired_seat_ids: list[int]
+
+
 class EventSeatSyncCountsInternal(SQLModel):
     """Row counts produced by a layout replacement transaction."""
     created_count: int

@@ -151,7 +151,7 @@ class EventRepository:
 
     @staticmethod
     async def _clone_zones(session: AsyncSession, event_id: int, venue_id: int) -> None:
-        """Copies the venue's live zones. price stays NULL (not configured yet)."""
+        """Copies the venue's existing zones. price stays NULL (not configured yet)."""
         # created_at / updated_at are spelled out rather than left to the
         # column defaults: those are `default_factory=func.now`, a *Python*
         # side default, so SQLAlchemy hands asyncpg the func.now() construct
@@ -172,7 +172,7 @@ class EventRepository:
 
     @staticmethod
     async def _clone_seats(session: AsyncSession, event_id: int) -> None:
-        """Copies the live template seats of every cloned zone in one statement,
+        """Copies the existing template seats of every cloned zone in one statement,
         joining freshly inserted event_zone rows back to their source zone."""
         source = (
             select(

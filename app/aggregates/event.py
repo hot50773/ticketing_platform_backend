@@ -20,6 +20,8 @@ The booking flow takes `FOR SHARE` on the same row before creating an order
 `seat_prices()` without an admin changing either underneath. `FOR UPDATE` on
 the booking path would serialise every purchase for an event - do not.
 """
+from collections.abc import Sequence
+
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +42,7 @@ from app.schemas.event import (
     EventLayoutSummaryInternal,
     EventOrderStatsInternal,
     EventProfileUpdate,
+    EventSeatDiffInternal,
     EventSeatLayout,
     EventSeatPriceInternal,
     EventSeatSyncCountsInternal,
@@ -80,7 +83,7 @@ class EventAggregate:
         )
 
     async def event_zones(self) -> list[EventZoneInternal]:
-        """Every live zone's price, used by the publish rule."""
+        """Every existing zone's price, used by the publish rule."""
         rows = await self._session.execute(
             select(EventZone)
             .where(EventZone.event_id == self._event.id)
@@ -92,7 +95,7 @@ class EventAggregate:
         ]
 
     async def event_layout(self) -> EventLayoutInternal:
-        """Every live zone with its live seats - the publish-time snapshot.
+        """Every zone and seat that still exists - the publish-time snapshot.
 
         Two filters carry weight here. Soft-deleted seats are excluded, or a
         retired seat would be handed a bit in the existence bitmap. And the
@@ -133,7 +136,7 @@ class EventAggregate:
         return EventLayoutInternal(event=self._event, zones=list(zones.values()))
 
     async def zone_ids(self) -> list[int]:
-        """Live zone ids - what the cache needs to build its keys.
+        """Existing zone ids - what the cache needs to build its keys.
 
         Deliberately not `event_layout()`: that one joins in every seat, and a
         10k-seat event should not drag all of them through Python just to
@@ -172,7 +175,6 @@ class EventAggregate:
         the result is the signal; OrderValidator turns that into the 404.
         """
         rows = await self._session.execute(
-            # TO_CHECK: 為這裡 select 語句裡面有兩個 ORM，為何不是 select EventSeat LEFT JOIN EventZone?
             select(EventSeat, EventZone)
             .join(EventZone, EventZone.id == EventSeat.event_zone_id)
             .where(EventSeat.id.in_(event_seat_ids))
@@ -225,7 +227,7 @@ class EventAggregate:
     async def zone_seats(
         self, event_zone_id: int, pagination: PaginationParams
     ) -> Page[EventSeat]:
-        """One page of a zone's live seats, ordered by serial_number."""
+        """One page of a zone's existing seats, ordered by serial_number."""
         await self._get_and_check_zone(event_zone_id)
         stmt = (
             select(EventSeat)
@@ -259,43 +261,50 @@ class EventAggregate:
         self._event.is_active = False
         await self._apply(self._event)
 
-    async def soft_delete(self) -> None:
-        # TO_CHECK: 是否命名為 soft_delete_cascade 比較好？
-        """Soft-deletes the event with its zones and seats. Zones and seats go
-        out via bulk UPDATE so a 10k-seat event stays one round trip each."""
+    async def soft_delete_cascade(self) -> list[int]:
+        """Soft-deletes the event with its zones and seats, and returns the
+        zone ids it took out - the caller needs them to drop the Redis bitmaps,
+        and by then they are no longer findable by query.
+
+        Zones first, with RETURNING, so the seat update can key off the ids
+        instead of re-running a subquery. The two statements are then ordered
+        by a visible data dependency rather than by an implicit rule that
+        whoever edits this must remember. Bulk UPDATE keeps a 10k-seat event
+        at one round trip each.
+        """
         now = now_utc()
-        live_zone_ids = (
-            select(EventZone.id)
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
-            .scalar_subquery()
-            # TO_CHECK: 需要跟我解釋這個 scalar_subquery 用途
+        zone_ids = list(
+            (
+                await self._session.execute(
+                    update(EventZone)
+                    .where(EventZone.event_id == self._event.id)
+                    .where(EventZone.deleted_at == None)
+                    .values(deleted_at=now)
+                    .returning(EventZone.id)
+                )
+            ).scalars()
         )
-        await self._session.execute(
-            update(EventSeat)
-            .where(EventSeat.event_zone_id.in_(live_zone_ids))
-            .where(EventSeat.deleted_at == None)
-            .values(deleted_at=now)
-            # TO_CHECK: In 的寫法是否比 left join 的效能還要差。這是否需要全表掃描？O（n）。是否有更好的寫法
-        )
-        await self._session.execute(
-            update(EventZone)
-            .where(EventZone.event_id == self._event.id)
-            .where(EventZone.deleted_at == None)
-            .values(deleted_at=now)
-        )
+
+        if zone_ids:
+            await self._session.execute(
+                update(EventSeat)
+                .where(EventSeat.event_zone_id.in_(zone_ids))
+                .where(EventSeat.deleted_at == None)
+                .values(deleted_at=now)
+            )
+
         self._event.deleted_at = now
         await self._apply(self._event)
+        return zone_ids
 
     async def add_zone(self, payload: EventZoneCreate) -> EventZoneWithSeatCountInternal:
         """Adds a zone and its seats, numbered from 0 in payload order."""
         event_id = self._event.id
         zone = EventZone(event_id=event_id, name=payload.name, price=payload.price)
-        self._session.add(zone)
         try:
+            self._session.add(zone)
             await self._session.flush()
         except IntegrityError as exc:
-            # TO_CHECK: 這個註解是否為冗余註解？
             # A failed flush expires every object in the session, so the id has
             # to be captured up front and the transaction wound back before the
             # message is built - otherwise reading it raises PendingRollbackError.
@@ -323,11 +332,12 @@ class EventAggregate:
     ) -> EventZoneWithSeatCountInternal:
         event_id = self._event.id
         zone = await self._get_and_check_zone(event_zone_id)
-        zone.name = payload.name
-        zone.price = payload.price
-        self._session.add(zone)
+        # The write and its one failure mode, together: name collides with
+        # another existing zone of this event. flush() is what surfaces it, early
+        # enough to translate - at commit time it would escape as a 500.
         try:
-            # TO_CHECK: 為何這裡要額外多一個 flush?
+            zone.name = payload.name
+            zone.price = payload.price
             await self._session.flush()
         except IntegrityError as exc:
             await self._session.rollback()
@@ -336,15 +346,13 @@ class EventAggregate:
             ) from exc
         await self._session.refresh(zone)
         return EventZoneWithSeatCountInternal(
-            zone=zone, seat_count=await self._count_live_seats(event_zone_id)
+            zone=zone, seat_count=await self._count_existing_seats(event_zone_id)
         )
 
     async def sync_zone_seats(
         self, event_zone_id: int, seats: list[EventSeatLayout]
     ) -> EventSeatSyncCountsInternal:
-        # TO_CHECK: 單一職責原則，這個 method 做了很多事情，是否可以拆細。讓每個 method 只負責一件事
-        """Syncs a zone's layout, keyed on `(row, col)`: insert new positions,
-        soft-delete missing ones, leave survivors untouched.
+        """flow: load what the zone has -> diff against the payload -> apply.
 
         No renumbering - a survivor keeps its serial_number, which *is* its
         Redis bit offset. New seats take max(serial_number) + 1 counting
@@ -352,7 +360,7 @@ class EventAggregate:
         seat.
         """
         await self._get_and_check_zone(event_zone_id)
-        live = (
+        existing = (
             await self._session.execute(
                 select(EventSeat)
                 .where(EventSeat.event_zone_id == event_zone_id)
@@ -360,16 +368,12 @@ class EventAggregate:
             )
         ).scalars().all()
 
-        desired = {(seat.row, seat.col) for seat in seats}
-        current = {(seat.row, seat.col): seat for seat in live}
+        diff = self._diff_layout(seats, existing)
 
-        retired = [seat for position, seat in current.items() if position not in desired]
-        added = sorted(desired - current.keys())
-
-        if retired:
+        if diff.retired_seat_ids:
             await self._session.execute(
                 update(EventSeat)
-                .where(EventSeat.id.in_([seat.id for seat in retired]))
+                .where(EventSeat.id.in_(diff.retired_seat_ids))
                 .values(deleted_at=now_utc())
             )
 
@@ -377,19 +381,44 @@ class EventAggregate:
         self._session.add_all([
             EventSeat(
                 event_zone_id=event_zone_id,
-                row=row,
-                col=col,
+                row=position.row,
+                col=position.col,
                 serial_number=next_serial + offset,
                 status=SeatStatus.AVAILABLE,
             )
-            for offset, (row, col) in enumerate(added)
+            for offset, position in enumerate(diff.added)
         ])
         await self._session.flush()
 
         return EventSeatSyncCountsInternal(
-            created_count=len(added),
-            deleted_count=len(retired),
-            seat_count=len(live) - len(retired) + len(added),
+            created_count=len(diff.added),
+            deleted_count=len(diff.retired_seat_ids),
+            seat_count=len(existing) - len(diff.retired_seat_ids) + len(diff.added),
+        )
+
+    @staticmethod
+    def _diff_layout(
+        desired: list[EventSeatLayout], existing: Sequence[EventSeat]
+    ) -> EventSeatDiffInternal:
+        """Compares a requested layout against the zone's seats, keyed on
+        `(row, col)`. A position in both is left alone.
+
+        `added` is sorted so the serial numbers assigned from it are
+        deterministic: the same payload always maps to the same Redis bit
+        offsets, whatever order the client listed the seats in.
+        """
+        wanted = {(seat.row, seat.col) for seat in desired}
+        by_position = {(seat.row, seat.col): seat for seat in existing}
+        return EventSeatDiffInternal(
+            added=[
+                EventSeatLayout(row=row, col=col)
+                for row, col in sorted(wanted - by_position.keys())
+            ],
+            retired_seat_ids=[
+                seat.id
+                for position, seat in by_position.items()
+                if position not in wanted
+            ],
         )
 
     # ----------------------------------------------------------------------- #
@@ -398,7 +427,6 @@ class EventAggregate:
     async def _apply(self, instance) -> None:
         """Flush a mutation and re-read the DB-generated columns."""
         self._session.add(instance)
-        # TO_CHECK: 請解釋為何這裡需要 flush 和 refresh
         await self._session.flush()
         await self._session.refresh(instance)
 
@@ -418,7 +446,7 @@ class EventAggregate:
             )
         return zone
 
-    async def _count_live_seats(self, event_zone_id: int) -> int:
+    async def _count_existing_seats(self, event_zone_id: int) -> int:
         total = await self._session.scalar(
             select(func.count())
             .select_from(EventSeat)
