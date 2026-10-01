@@ -172,6 +172,7 @@ class EventAggregate:
         the result is the signal; OrderValidator turns that into the 404.
         """
         rows = await self._session.execute(
+            # TO_CHECK: 為這裡 select 語句裡面有兩個 ORM，為何不是 select EventSeat LEFT JOIN EventZone?
             select(EventSeat, EventZone)
             .join(EventZone, EventZone.id == EventSeat.event_zone_id)
             .where(EventSeat.id.in_(event_seat_ids))
@@ -259,6 +260,7 @@ class EventAggregate:
         await self._apply(self._event)
 
     async def soft_delete(self) -> None:
+        # TO_CHECK: 是否命名為 soft_delete_cascade 比較好？
         """Soft-deletes the event with its zones and seats. Zones and seats go
         out via bulk UPDATE so a 10k-seat event stays one round trip each."""
         now = now_utc()
@@ -267,12 +269,14 @@ class EventAggregate:
             .where(EventZone.event_id == self._event.id)
             .where(EventZone.deleted_at == None)
             .scalar_subquery()
+            # TO_CHECK: 需要跟我解釋這個 scalar_subquery 用途
         )
         await self._session.execute(
             update(EventSeat)
             .where(EventSeat.event_zone_id.in_(live_zone_ids))
             .where(EventSeat.deleted_at == None)
             .values(deleted_at=now)
+            # TO_CHECK: In 的寫法是否比 left join 的效能還要差。這是否需要全表掃描？O（n）。是否有更好的寫法
         )
         await self._session.execute(
             update(EventZone)
@@ -291,6 +295,7 @@ class EventAggregate:
         try:
             await self._session.flush()
         except IntegrityError as exc:
+            # TO_CHECK: 這個註解是否為冗余註解？
             # A failed flush expires every object in the session, so the id has
             # to be captured up front and the transaction wound back before the
             # message is built - otherwise reading it raises PendingRollbackError.
@@ -322,6 +327,7 @@ class EventAggregate:
         zone.price = payload.price
         self._session.add(zone)
         try:
+            # TO_CHECK: 為何這裡要額外多一個 flush?
             await self._session.flush()
         except IntegrityError as exc:
             await self._session.rollback()
@@ -336,6 +342,7 @@ class EventAggregate:
     async def sync_zone_seats(
         self, event_zone_id: int, seats: list[EventSeatLayout]
     ) -> EventSeatSyncCountsInternal:
+        # TO_CHECK: 單一職責原則，這個 method 做了很多事情，是否可以拆細。讓每個 method 只負責一件事
         """Syncs a zone's layout, keyed on `(row, col)`: insert new positions,
         soft-delete missing ones, leave survivors untouched.
 
@@ -391,6 +398,7 @@ class EventAggregate:
     async def _apply(self, instance) -> None:
         """Flush a mutation and re-read the DB-generated columns."""
         self._session.add(instance)
+        # TO_CHECK: 請解釋為何這裡需要 flush 和 refresh
         await self._session.flush()
         await self._session.refresh(instance)
 
