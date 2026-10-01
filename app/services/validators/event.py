@@ -20,7 +20,6 @@ from app.schemas.event import (
     EventHoldingTime,
     EventOrderStatsInternal,
     EventStateInternal,
-    EventZoneInternal,
     EventZoneWithSeatInternal,
 )
 

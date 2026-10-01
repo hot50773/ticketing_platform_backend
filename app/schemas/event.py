@@ -218,13 +218,6 @@ class EventSeatPriceInternal(SQLModel):
     price: int | None
 
 
-class EventZoneInternal(SQLModel):
-    """Price projection used by the publish rule."""
-    id: int
-    name: str
-    price: int | None
-
-
 class EventOrderStatsInternal(SQLModel):
     """Order counter used by the unpublish / delete rules.
 

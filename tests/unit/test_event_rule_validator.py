@@ -18,7 +18,7 @@ from app.schemas.event import (
     EventHoldingTime,
     EventOrderStatsInternal,
     EventStateInternal,
-    EventZoneInternal,
+    EventZoneWithSeatInternal,
 )
 from app.services.validators import EventRuleValidator
 
@@ -30,8 +30,9 @@ def validator() -> EventRuleValidator:
     return EventRuleValidator(clock=lambda: NOW)
 
 
-def zone(name: str, price: int | None) -> EventZoneInternal:
-    return EventZoneInternal(id=1, name=name, price=price)
+def zone(name: str, price: int | None) -> EventZoneWithSeatInternal:
+    """seats is required by the DTO but no publish-side rule reads it."""
+    return EventZoneWithSeatInternal(id=1, name=name, price=price, seats=[])
 
 
 def holding_time(start_at, end_at) -> EventHoldingTime:

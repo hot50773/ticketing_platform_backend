@@ -16,7 +16,6 @@ Boundaries:
 import logging
 
 from app.cache.event_layout import EventLayoutCache
-from app.models import EventZone
 from app.repositories.event import EventRepository
 from app.schemas import Page, PaginationParams
 from app.schemas.event import (
@@ -25,9 +24,6 @@ from app.schemas.event import (
     EventHoldingTimeUpdate,
     EventProfileUpdate,
     EventResponse,
-    EventZoneInternal,
-    EventLayoutInternal,
-    EventZoneWithSeatInternal,
 )
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
