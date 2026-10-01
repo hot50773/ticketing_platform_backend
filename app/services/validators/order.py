@@ -22,7 +22,7 @@ from app.exceptions import (
 )
 from app.libs.clock.functional import now_utc
 from app.schemas.event import EventSeatPriceInternal, EventStateInternal
-from app.schemas.order import OrderStateInternal
+from app.schemas.order import OrderCreate, OrderStateInternal
 
 
 class OrderValidator:
@@ -52,9 +52,7 @@ class OrderValidator:
 
     @staticmethod
     def validate_seats_orderable(
-        event_id: int,
-        event_seat_ids: list[int],
-        seats: list[EventSeatPriceInternal],
+        payload: OrderCreate, seats: list[EventSeatPriceInternal]
     ) -> None:
         """Every requested seat belongs to this event and carries a price.
 
@@ -68,11 +66,13 @@ class OrderValidator:
         one.
         """
         resolved = {seat.event_seat_id for seat in seats}
-        missing = [seat_id for seat_id in event_seat_ids if seat_id not in resolved]
+        missing = [
+            seat_id for seat_id in payload.event_seat_ids if seat_id not in resolved
+        ]
         if missing:
             raise EntityNotFoundError(
                 EVENT_SEAT_NOT_FOUND_MSG.format(
-                    event_seat_ids=missing, event_id=event_id
+                    event_seat_ids=missing, event_id=payload.event_id
                 )
             )
 

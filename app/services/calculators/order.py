@@ -9,7 +9,11 @@ from datetime import datetime, timedelta
 
 from app.libs.clock.functional import now_utc
 from app.schemas.event import EventSeatPriceInternal
-from app.schemas.order import OrderPricingInternal, OrderTicketPricingInternal
+from app.schemas.order import (
+    OrderCreate,
+    OrderPricingInternal,
+    OrderTicketPricingInternal,
+)
 
 # The cart hold from the spec; the expiry job releases the order once it passes.
 DEFAULT_PAYMENT_WINDOW = timedelta(minutes=10)
@@ -27,7 +31,7 @@ class OrderCalculator:
         self._now = clock
 
     def price_order(
-        self, event_seat_ids: list[int], seats: list[EventSeatPriceInternal]
+        self, payload: OrderCreate, seats: list[EventSeatPriceInternal]
     ) -> OrderPricingInternal:
         """Prices every seat at its zone's price, in the order requested.
 
@@ -40,7 +44,7 @@ class OrderCalculator:
             OrderTicketPricingInternal(
                 event_seat_id=seat_id, amount=price_by_seat[seat_id]
             )
-            for seat_id in event_seat_ids
+            for seat_id in payload.event_seat_ids
         ]
         return OrderPricingInternal(
             tickets=tickets,

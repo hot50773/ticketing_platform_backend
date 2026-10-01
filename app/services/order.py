@@ -96,14 +96,12 @@ class OrderService:
         async with self._repository.load_for_create(payload) as order_factory:
             self._validator.validate_event_orderable(order_factory.event_state)
             seats = await order_factory.seat_prices()
-            self._validator.validate_seats_orderable(
-                payload.event_id, payload.event_seat_ids, seats
-            )
+            self._validator.validate_seats_orderable(payload, seats)
 
             # TODO: Redis bitmap 檢查座位是否已被鎖走或售出（人工實作）。
             # 沒有這道檢查就會超賣：uq_order_ticket 只擋單張訂單內的重複座位。
 
-            pricing = self._calculator.price_order(payload.event_seat_ids, seats)
+            pricing = self._calculator.price_order(payload, seats)
             order_aggr = await order_factory.create(pricing)
             return self._mapper.to_order_detail(order_aggr.with_tickets())
 
