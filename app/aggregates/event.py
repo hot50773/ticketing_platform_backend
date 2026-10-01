@@ -50,7 +50,6 @@ from app.schemas.event import (
     EventSeatSyncCountsInternal,
     EventStateInternal,
     EventZoneCreate,
-    EventZoneInternal,
     EventZoneProfileUpdate,
     EventZoneWithSeatCountInternal,
     EventZoneWithSeatInternal,
@@ -83,14 +82,6 @@ class EventAggregate:
             is_active=self._event.is_active,
             start_at=self._event.start_at,
         )
-
-    async def event_zones(self) -> list[EventZoneInternal]:
-        """Every existing zone's price, used by the publish rule."""
-        rows = await self._session.execute(self._existing_zones_stmt(self._event.id))
-        return [
-            EventZoneInternal(id=zone.id, name=zone.name, price=zone.price)
-            for zone in rows.scalars().all()
-        ]
 
     async def event_layout(self) -> EventLayoutInternal:
         """Every zone and seat that still exists - the publish-time snapshot.

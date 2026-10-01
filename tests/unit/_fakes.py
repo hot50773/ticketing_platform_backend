@@ -20,7 +20,6 @@ from app.schemas.event import (
     EventSeatInternal,
     EventSeatSyncCountsInternal,
     EventStateInternal,
-    EventZoneInternal,
     EventZoneWithSeatCountInternal,
     EventSeatPriceInternal,
     EventZoneWithSeatInternal,
@@ -107,10 +106,6 @@ class FakeAggregate:
         return EventLayoutInternal(
             event=self._event, zones=[a_zone_with_seats(price=self._zone_price)]
         )
-
-    async def zone_pricings(self) -> list[EventZoneInternal]:
-        self.calls.append("zone_pricings")
-        return [EventZoneInternal(id=10, name="A", price=self._zone_price)]
 
     async def zone_ids(self) -> list[int]:
         self.calls.append("zone_ids")
