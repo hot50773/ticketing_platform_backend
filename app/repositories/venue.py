@@ -29,8 +29,8 @@ class VenueRepository:
     async def create_venue(self, venue_data: VenueCreate) -> Venue:
         """Persists a new Venue record in the database."""
         async with self.session_factory() as session:
-            venue = self._create_venue(session, venue_data)
             try:
+                venue = self._create_venue(session, venue_data)
                 await session.commit()
             except IntegrityError as exc:
                 await session.rollback()
@@ -133,16 +133,16 @@ class VenueRepository:
                 raise EntityNotFoundError(VENUE_NOT_FOUND_MSG.format(venue_id=venue_id))
 
             zone = Zone(name=zone_data.name, venue_id=venue_id)
-            session.add(zone)
             try:
+                session.add(zone)
                 await session.commit()
-                await session.refresh(zone)
-                return zone
             except IntegrityError as exc:
                 await session.rollback()
                 raise EntityConflictError(
                     f"Zone name '{zone_data.name}' already exists for venue {venue_id}"
                 ) from exc
+            await session.refresh(zone)
+            return zone
 
     async def get_zones_by_venue_id(
         self, venue_id: int, pagination: PaginationParams
@@ -197,16 +197,16 @@ class VenueRepository:
                 col=seat_data.col,
                 zone_id=zone_id,
             )
-            session.add(seat)
             try:
+                session.add(seat)
                 await session.commit()
-                await session.refresh(seat)
-                return seat
             except IntegrityError as exc:
                 await session.rollback()
                 raise EntityConflictError(
                     f"Seat serial number {next_serial} already exists in zone {zone_id}"
                 ) from exc
+            await session.refresh(seat)
+            return seat
 
     @staticmethod
     async def _next_serial_number(session: AsyncSession, zone_id: int) -> int:
@@ -240,8 +240,8 @@ class VenueRepository:
                 )
                 for serial, s in zip(serial_numbers, seats_data)
             ]
-            session.add_all(seats)
             try:
+                session.add_all(seats)
                 await session.commit()
             except IntegrityError as exc:
                 await session.rollback()
