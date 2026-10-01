@@ -36,18 +36,9 @@ EventSeatIds = Annotated[list[int], AfterValidator(_reject_duplicate_seats)]
 class OrderCreate(SQLModel):
     """POST /orders.
 
-    The request says *which* seats; the backend says what they cost and how
-    long the hold lasts. Neither the ticket prices nor payment_deadline are
-    accepted from the client: the price is read from the event zone at
-    creation time (OrderCalculator), and a client-supplied deadline would let
-    the caller hold seats for as long as it liked.
-
-    The price is still snapshotted onto every OrderTicket row rather than
-    looked up again later, so a zone repriced after the order was placed
-    cannot retroactively change what the customer agreed to pay.
-
-    An empty order is rejected at the boundary rather than by a rule: it is a
-    malformed request, not a business-rule violation, so it earns a 422.
+    The request says which seats; the backend says what they cost and how long
+    the hold lasts. Prices are still snapshotted onto each OrderTicket, so a
+    later reprice cannot change what the customer agreed to pay.
     """
     user_id: int
     event_id: int
@@ -109,22 +100,20 @@ class OrderDetailResponse(OrderResponse):
 # --------------------------------------------------------------------------- #
 # Internal transport (Repository -> Service)
 #
-# The event state and seat prices an order is judged against are the Event
-# aggregate's to publish, so they live in schemas/event.py - see
-# EventStateInternal and EventSeatPriceInternal.
+# The event state and seat prices an order is judged against belong to the
+# Event aggregate, so they live in schemas/event.py.
 # --------------------------------------------------------------------------- #
 class OrderTicketPricingInternal(SQLModel):
-    """What one ticket will be written at."""
+    """The price one ticket will be written at."""
     event_seat_id: int
     amount: int
 
 
 class OrderPricingInternal(SQLModel):
-    """Everything OrderCalculator decides about a new order.
+    """What OrderCalculator decides about a new order.
 
-    payment_deadline is not optional here even though the column is: an order
-    created through this flow always carries a hold window. NULL is reserved
-    for rows created before the window existed.
+    payment_deadline is required here though the column is nullable: NULL is
+    only for rows created before the hold window existed.
     """
     tickets: list[OrderTicketPricingInternal]
     checkout_amount: int

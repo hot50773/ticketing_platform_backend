@@ -2,11 +2,9 @@
 
 Instead of exposing one method per query, this hands out an OrderAggregate that
 already owns a transaction: a use case enters it once, checks its rules and
-writes, and everything commits together. load_for_create() hands out an
-OrderAggregateFactory instead, since the order row does not exist yet - and is
-named like load_for_update(), which does not update either: both load what the
-use case needs and lock it, and neither performs the operation it is named for.
-See app/aggregates/order.py for the concurrency contract behind them.
+writes, and everything commits together. load_for_create() hands out a factory
+instead, the order row not existing yet; like load_for_update(), it loads and
+locks but does not itself perform the operation it is named for.
 
 Only genuinely collection-level queries stay here - ones that do not belong to
 any single aggregate instance.
@@ -77,25 +75,12 @@ class OrderRepository:
     async def load_for_create(
         self, payload: OrderCreate
     ) -> AsyncIterator[OrderAggregateFactory]:
-        """Loads the event a new order will hang off, locked, inside the write
-        transaction, and hands out the factory that can write the order.
+        """Locks the event and hands out the factory. Inserts nothing - that is
+        OrderAggregateFactory.create().
 
-        Nothing is inserted until the use case calls create() on it. The
-        rules that decide whether the order may exist at all - is the event on
-        sale, do the seats belong to it, what do they cost - need rows this
-        transaction has to read first, and reading them anywhere else would
-        leave a window for the event to change underneath the insert.
-
-        Those reads stay the Event aggregate's: the locked row is wrapped in an
-        EventAggregate over this same session, and the factory forwards to it.
-
-        Takes `FOR SHARE` on the event row before any of that. This is the
-        booking half of the contract documented in app/aggregates/event.py:
-        shared locks do not block each other, so ticket grabbing stays fully
-        concurrent, while an admin unpublishing or deleting the event waits on
-        `FOR UPDATE` for the orders already in flight instead of racing them.
-        Taking `FOR UPDATE` here instead would serialise every purchase for an
-        event - do not do that.
+        `FOR SHARE`, not `FOR UPDATE`: an admin unpublishing the event still
+        waits for in-flight orders, but purchases do not queue behind each
+        other. `FOR UPDATE` here would serialise every purchase for an event.
 
         Raises EntityNotFoundError when the event does not exist or is deleted.
         """
@@ -151,9 +136,8 @@ class OrderRepository:
     async def _lock_event_for_share(session: AsyncSession, event_id: int) -> Event:
         """Takes `FOR SHARE` on the event row and asserts it is still live.
 
-        The locked row is returned rather than discarded: the ordering rules
-        judge the event on it, and re-reading it would drop the guarantee that
-        what they judged is what the lock is holding.
+        Returns the locked row rather than discarding it - re-reading would
+        drop the guarantee that what the rules judged is what the lock holds.
         """
         event = await session.scalar(
             select(Event)

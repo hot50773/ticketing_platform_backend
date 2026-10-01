@@ -86,19 +86,12 @@ class OrderService:
         self._payment_gateway = payment_gateway
 
     async def create_order(self, payload: OrderCreate) -> OrderDetailResponse:
-        """flow: assert the event is on sale -> resolve and assert the seats ->
-        price them -> insert order + tickets.
+        """flow: assert the event is orderable -> resolve and assert the seats
+        -> price them -> insert. Always PENDING / PENDING.
 
-        All of it inside one transaction holding `FOR SHARE` on the event row,
-        so the event cannot be unpublished or deleted between the rules and the
-        insert.
-
-        The request only says which seats. The ticket prices come from the
-        event zones and the payment deadline from OrderCalculator, because a
-        client that could name its own price or its own hold window would be
-        the whole business rule.
-
-        The order is always created PENDING / PENDING.
+        One transaction holding `FOR SHARE` on the event, so it cannot be
+        unpublished or repriced between the rules and the insert. Prices and
+        the deadline come from the backend; the request only picks seats.
         """
         async with self._repository.load_for_create(payload) as order_factory:
             self._validator.validate_event_orderable(order_factory.event_state)
@@ -107,12 +100,8 @@ class OrderService:
                 payload.event_id, payload.event_seat_ids, seats
             )
 
-            # TODO: 座位是否已被別人鎖走或售出，要在這裡用 Redis bitmap 檢查，
-            # 擋下來才往下計價。
-            #
-            # 資料庫擋不住這件事：uq_order_ticket 是 (order_id, event_seat_id)
-            # 的部分唯一索引，只擋同一張訂單重複同一個座位，不擋兩張訂單同時
-            # 搶同一個座位。在這個檢查補上之前，並行下單會超賣。
+            # TODO: Redis bitmap 檢查座位是否已被鎖走或售出（人工實作）。
+            # 沒有這道檢查就會超賣：uq_order_ticket 只擋單張訂單內的重複座位。
 
             pricing = self._calculator.price_order(payload.event_seat_ids, seats)
             order_aggr = await order_factory.create(pricing)
@@ -192,9 +181,5 @@ class OrderService:
 
 
 # TODO
-#   建立訂單時的座位鎖定，還沒接上：
-#     - 座位尚未被別人預訂走 -> 用 redis bitmap 檢查（人工實作，位置留在
-#       create_order 裡）
-#     - 沒有這道檢查之前，並行下單會超賣：DB 的 uq_order_ticket 只擋單張訂單
-#       內重複座位，擋不了兩張訂單搶同一個座位
-#   付款成功後要把 EventSeat.status 推到 RESERVED，並更新 redis 的 sold bitmap
+#   - 建單時的 redis 座位鎖定（人工實作，位置留在 create_order 裡）
+#   - 付款成功後把 EventSeat.status 推到 RESERVED，並更新 redis 的 sold bitmap

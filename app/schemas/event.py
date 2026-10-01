@@ -200,25 +200,18 @@ class EventLayoutSummaryInternal(SQLModel):
 
 
 class EventStateInternal(SQLModel):
-    """An event's state, as handed to the rule validators.
-
-    Both sides judge on it: the admin rules on is_active (what an unpublished
-    event may still have done to it) and the order rules on both fields (an
-    event is orderable while it is published and has not started).
-    """
+    """An event's state, as handed to the rule validators. The admin rules read
+    is_active; the order rules read both (orderable = published, not started)."""
     id: int
     is_active: bool
     start_at: datetime
 
 
 class EventSeatPriceInternal(SQLModel):
-    """One seat resolved to the zone it sits in and that zone's price.
+    """One seat resolved to its zone's price - what the booking path needs,
+    against the whole layout the publish rules read.
 
-    Built for the booking path: an order needs the price of the handful of
-    seats somebody picked, not the whole layout.
-
-    price stays optional because the column is - NULL means the zone was never
-    priced, which the order rules reject rather than the calculator guessing at.
+    NULL price means the zone was never priced; the order rules reject it.
     """
     event_seat_id: int
     event_zone_id: int

@@ -8,9 +8,8 @@ The aggregate carries no business rules - it only exposes the state the rules
 need (always as `*Internal` DTOs, never ORM rows) and applies the mutations a
 use case asks for. Judgement stays in OrderValidator.
 
-The create flow has rules to check before there is an order to check them
-against, so it goes through a factory instead: see
-app/aggregates/order_factory.py.
+Creating an order goes through app/aggregates/order_factory.py instead - there
+is nothing to apply rules to yet.
 
 CONCURRENCY CONTRACT
 --------------------
@@ -22,11 +21,10 @@ Shared locks do not block each other, so ticket grabbing stays concurrent.
 
 EAGER LOADING
 -------------
-Every relationship on the models is declared `lazy="raise"`. Reading
-`order.tickets` therefore only works when it was loaded through
-TICKET_DETAIL_LOADER below. That is deliberate: a lazy load here would fire a
-query from outside the greenlet that owns the connection and surface as
-MissingGreenlet somewhere unrelated.
+Every relationship is `lazy="raise"`, so `order.tickets` only works when
+TICKET_DETAIL_LOADER below loaded it. Deliberate: a lazy load here fires from
+outside the greenlet owning the connection and surfaces as MissingGreenlet
+somewhere unrelated.
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload

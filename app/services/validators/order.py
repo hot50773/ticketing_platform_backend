@@ -34,13 +34,9 @@ class OrderValidator:
     def validate_event_orderable(self, state: EventStateInternal) -> None:
         """flow: published -> not started yet.
 
-        Publication is checked first: an unpublished event is not a sale that
-        closed, it is a sale that never opened, and telling the caller it has
-        already started would be a lie.
-
-        Sales close at start_at rather than end_at. A seat sold after the doors
-        open is one the customer cannot use, and the ten-minute hold would
-        outlive the moment it was bought for.
+        Publication first, or an event that never opened gets told the sale
+        closed. Sales close at start_at, not end_at - a seat sold after the
+        doors open is one nobody can use.
         """
         if not state.is_active:
             raise EventNotPublishedError(
@@ -62,23 +58,14 @@ class OrderValidator:
     ) -> None:
         """Every requested seat belongs to this event and carries a price.
 
-        Shape rules - a non-empty seat list, no repeated seat - live in
-        OrderCreate as schema constraints, so a malformed request earns a 422
-        at the boundary instead of a 409 from in here.
+        A seat missing from `seats` does not exist, was soft-deleted, or belongs
+        to another event - all three are a 404, not a rule violation.
 
-        `seats` is what the aggregate could resolve, so a seat missing from it
-        is one that does not exist, was soft-deleted, or belongs to another
-        event. All three are the caller naming something that is not there, so
-        all three come back as a 404 rather than a rule violation.
+        The unpriced case should be unreachable (publishing rejects unpriced
+        zones), but the calculator must never meet a NULL price.
 
-        An unpriced zone should be unreachable - publishing rejects one, and a
-        published event cannot gain a zone - but the rule is stated anyway: the
-        alternative is the calculator meeting a NULL price and either crashing
-        or quietly selling a seat for nothing.
-
-        Whether somebody else is already holding the seat is NOT decided here.
-        That lives in Redis and is checked by OrderService before it prices the
-        order.
+        Whether somebody else already holds the seat is Redis's call, not this
+        one.
         """
         resolved = {seat.event_seat_id for seat in seats}
         missing = [seat_id for seat_id in event_seat_ids if seat_id not in resolved]

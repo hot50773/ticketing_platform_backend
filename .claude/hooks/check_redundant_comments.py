@@ -36,8 +36,8 @@ get_event 的「with its zones and seats」確實補了資訊）。寧可漏也�
 type: "prompt" 的 hook，而不是把這支腳本的閾值調鬆——調鬆只會開始誤殺。
 
 刻意不管的事：
-  - 多行 docstring。這個 repo 的風格就是長篇解釋「為什麼」，那是最有價值的
-    註解，不該被這支腳本碰。
+  - 多行 docstring。太長該砍、常識該刪，都需要判斷，交給 prompt hook；
+    這支只抓字面重述。
   - 註解掉的程式碼。那是另一種味道，而且本 repo 的說明註解裡常有示範用的
     程式碼片段，誤判率太高。
   - 單字的 section 標題（# Cache、# Repositories）。那是排版用的組織手段，
@@ -212,8 +212,8 @@ def main() -> int:
 
     out += [
         "",
-        "多行 docstring 不在此規則範圍：解釋「為什麼」的長註解是這個 repo 最有",
-        "價值的部分，本檢查只針對把名稱換句話說的單行註解。",
+        "本檢查只看單行的字面重述。多行 docstring 的長度與常識問題由 prompt",
+        "hook 判斷，不在這裡。",
     ]
     print("\n".join(out), file=sys.stderr)
     return 2
