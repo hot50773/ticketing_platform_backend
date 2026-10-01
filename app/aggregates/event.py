@@ -262,15 +262,10 @@ class EventAggregate:
         await self._apply(self._event)
 
     async def soft_delete_cascade(self) -> list[int]:
-        """Soft-deletes the event with its zones and seats, and returns the
-        zone ids it took out - the caller needs them to drop the Redis bitmaps,
-        and by then they are no longer findable by query.
-
-        Zones first, with RETURNING, so the seat update can key off the ids
-        instead of re-running a subquery. The two statements are then ordered
-        by a visible data dependency rather than by an implicit rule that
-        whoever edits this must remember. Bulk UPDATE keeps a 10k-seat event
-        at one round trip each.
+        """Soft-deletes the event with its zones and seats; returns the zone
+        ids, which no query can find afterwards and the caller needs for Redis.
+        RETURNING rather than a subquery, so the seat update keys off data
+        instead of statement order.
         """
         now = now_utc()
         zone_ids = list(
@@ -400,12 +395,9 @@ class EventAggregate:
     def _diff_layout(
         desired: list[EventSeatLayout], existing: Sequence[EventSeat]
     ) -> EventSeatDiffInternal:
-        """Compares a requested layout against the zone's seats, keyed on
-        `(row, col)`. A position in both is left alone.
-
-        `added` is sorted so the serial numbers assigned from it are
-        deterministic: the same payload always maps to the same Redis bit
-        offsets, whatever order the client listed the seats in.
+        """Keyed on `(row, col)`; a position in both is left alone, which is
+        what preserves its serial_number. `added` is sorted so serial numbers
+        come out the same whatever order the client listed the seats in.
         """
         wanted = {(seat.row, seat.col) for seat in desired}
         by_position = {(seat.row, seat.col): seat for seat in existing}
