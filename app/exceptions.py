@@ -42,6 +42,9 @@ class SeatOccupiedError(BusinessRuleViolationError):
     """Raised when reshaping a zone whose seats are locked or reserved."""
     pass
 
+class SeatUnexistError(BusinessRuleViolationError):
+    pass
+
 
 class ActiveOrdersExistError(BusinessRuleViolationError):
     """Raised when unpublishing or deleting an event that still has active orders."""
