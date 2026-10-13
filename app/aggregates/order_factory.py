@@ -54,8 +54,7 @@ class OrderAggregateFactory:
         """Inserts the order and its tickets. status / payment_status are left
         to their server defaults, which the re-read brings back.
 
-        Seats are not marked RESERVED - that happens on payment. Nothing here
-        stops two orders taking the same seat either: uq_order_ticket is
+        Nothing here stops two orders taking the same seat: uq_order_ticket is
         per-order, so the Redis hold is what has to.
         """
         order = Order(
@@ -76,6 +75,10 @@ class OrderAggregateFactory:
             )
             for ticket in pricing.tickets
         ])
+
+        await self._event.reserve_seats(
+            event_seat_ids=[ticket.event_seat_id for ticket in pricing.tickets],
+        )
         await self._session.flush()
 
         return OrderAggregate(self._session, await self._reload(order.id))
