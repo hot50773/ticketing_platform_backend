@@ -20,25 +20,33 @@ runtime. The real guard against a bad bitmap going live is the caller: any
 error propagates out of the publish transaction, so the event stays
 unpublished and the next publish rewrites the bitmap from scratch.
 """
+import json
 import logging
 
-from redis import RedisError
+from redis import RedisError, ResponseError
 
 from app.db.redis import RedisClient
-from app.enums import RedisBitUnit, RedisSeatExistence
-from app.schemas.event import EventLayoutInternal, EventZoneWithSeatInternal
+from app.enums import RedisBitUnit, RedisSeatExistence, RedisSeatSoldStatus, RedisResultStatus
+from app.exceptions import SeatOccupiedError, EntityNotFoundError
+from app.schemas.event import (
+    EventLayoutInternal,
+    EventZoneWithSeatInternal,
+    EventSeatsPricingInternal,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class EventLayoutCache:
     """Caches event layouts in Redis."""
+    LOCK_SEATS_SCRIPT_PATH = "lua/lock_seats.lua"
 
     SEAT_SOLD_BITMAP_KEY = "seat_sold_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否售出的紀錄表
     SEAT_EXISTENCE_BITMAP_KEY = "seat_existence_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否存在的紀錄表
 
     def __init__(self, redis_client: RedisClient):
         self._redis_client = redis_client
+        self._lock_seats_script = self._redis_client.register_script(self.LOCK_SEATS_SCRIPT_PATH)
 
     async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
         """Warms every zone's existence bitmap in one round trip.
@@ -128,3 +136,30 @@ class EventLayoutCache:
         and *is* a str, so it needs no unwrapping.
         """
         return bitfield.set(RedisBitUnit.UINT1, offset, RedisSeatExistence.EXIST.value)
+
+    async def check_and_lock_seats_atomic(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
+        self._lock_seats_script = self._redis_client.register_script(self.LOCK_SEATS_SCRIPT_PATH)
+
+        event_id = event_seats_pricing.event_id
+        zone_id_to_seat_serials_map = {}
+
+        for seat in event_seats_pricing.seats:
+            zone_id = seat.event_zone_id
+            seat_serials = zone_id_to_seat_serials_map.get(zone_id, set())
+            zone_id_to_seat_serials_map[zone_id] = seat_serials.add(seat.seat_serial_number)
+
+        serialized_seats = json.dumps(zone_id_to_seat_serials_map)
+        try:
+            result = await self._lock_seats_script(keys=[], args=[event_id, serialized_seats])
+            if result[0] == RedisResultStatus.FAILED:
+                err_code, err_event_id, err_zone_id, err_seat_serial = result[1:]
+                err_msg = "Seat Serial {seat_serial} in Event #{event_id} Zone #{zone_id} is occupied.".format(
+                    seat_serial=err_seat_serial,
+                    event_id=err_event_id,
+                    zone_id=err_zone_id,
+                )
+                raise SeatOccupiedError(err_msg)
+
+        except RedisError as e:
+            logger.exception("Failed to lock seat bitmaps for event %s", event_id)
+            raise e

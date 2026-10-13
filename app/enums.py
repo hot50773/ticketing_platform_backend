@@ -48,3 +48,7 @@ class RedisSeatSoldStatus(enum.IntEnum):
     """座位是否售出"""
     NOT_SOLD = 0 # 未售出
     SOLD = 1 # 已售出
+
+class RedisResultStatus(enum.IntEnum):
+    SUCCESS = 1
+    FAILED = 0

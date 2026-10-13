@@ -19,6 +19,7 @@ transaction - see its docstring.
 import logging
 from typing import Protocol
 
+from app.cache.event_layout import EventLayoutCache
 from app.repositories.order import OrderRepository
 from app.schemas import Page, PaginationParams
 from app.schemas.order import (
@@ -78,12 +79,14 @@ class OrderService:
         order_calculator: OrderCalculator,
         order_schema_mapper: OrderSchemaMapper,
         payment_gateway: PaymentGateway,
+        event_layout_cache: EventLayoutCache,
     ):
         self._repository = order_repository
+        self._payment_gateway = payment_gateway
+        self._cache = event_layout_cache
         self._validator = order_validator
         self._calculator = order_calculator
         self._mapper = order_schema_mapper
-        self._payment_gateway = payment_gateway
 
     async def create_order(self, payload: OrderCreate) -> OrderDetailResponse:
         """flow: assert the event is orderable -> resolve and assert the seats
@@ -100,8 +103,7 @@ class OrderService:
             self._validator.validate_event_orderable(event_state)
             self._validator.validate_seats_input(payload, seats_pricing_data)
 
-            # TODO: Redis bitmap 檢查座位是否已被鎖走或售出（人工實作）。
-            # 沒有這道檢查就會超賣：uq_order_ticket 只擋單張訂單內的重複座位。
+            await self._cache.check_and_lock_seats_atomic(seats_pricing_data)
 
             priced_order = self._calculator.calculate_order_price(payload, seats_pricing_data)
             order_aggr = await order_aggr_factory.create(priced_order)
@@ -181,5 +183,4 @@ class OrderService:
 
 
 # TODO
-#   - 建單時的 redis 座位鎖定（人工實作，位置留在 create_order 裡）
 #   - 付款成功後把 EventSeat.status 推到 RESERVED，並更新 redis 的 sold bitmap
