@@ -207,15 +207,23 @@ class EventStateInternal(SQLModel):
     start_at: datetime
 
 
-class EventSeatPriceInternal(SQLModel):
-    """One seat resolved to its zone's price - what the booking path needs,
-    against the whole layout the publish rules read.
-
-    NULL price means the zone was never priced; the order rules reject it.
+class SeatPriceInternal(SQLModel):
+    """One seat at its zone's price. serial_number rides along because it is
+    the seat's Redis bit offset. NULL price means the zone was never priced -
+    the order rules reject it.
     """
     event_seat_id: int
     event_zone_id: int
+    seat_serial_number: int
     price: int | None
+
+
+class EventSeatsPricingInternal(SQLModel):
+    """The seats one order asked for, carrying the event_id that the Redis
+    bitmap keys are built from.
+    """
+    event_id: int
+    seats: list[SeatPriceInternal] = Field(default_factory=list)
 
 
 class EventOrderStatsInternal(SQLModel):

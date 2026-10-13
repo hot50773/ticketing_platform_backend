@@ -93,16 +93,18 @@ class OrderService:
         unpublished or repriced between the rules and the insert. Prices and
         the deadline come from the backend; the request only picks seats.
         """
-        async with self._repository.load_for_create(payload) as order_factory:
-            self._validator.validate_event_orderable(order_factory.event_state)
-            seats = await order_factory.seat_prices()
-            self._validator.validate_seats_orderable(payload, seats)
+        async with self._repository.load_for_create(payload) as order_aggr_factory:
+            event_state = order_aggr_factory.event_state
+            seats_pricing_data = await order_aggr_factory.seats_pricing()
+
+            self._validator.validate_event_orderable(event_state)
+            self._validator.validate_seats_input(payload, seats_pricing_data)
 
             # TODO: Redis bitmap 檢查座位是否已被鎖走或售出（人工實作）。
             # 沒有這道檢查就會超賣：uq_order_ticket 只擋單張訂單內的重複座位。
 
-            pricing = self._calculator.price_order(payload, seats)
-            order_aggr = await order_factory.create(pricing)
+            priced_order = self._calculator.calculate_order_price(payload, seats_pricing_data)
+            order_aggr = await order_aggr_factory.create(priced_order)
             return self._mapper.to_order_detail(order_aggr.with_tickets())
 
     async def list_orders(self, pagination: PaginationParams) -> Page[OrderResponse]:

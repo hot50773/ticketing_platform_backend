@@ -109,12 +109,14 @@ class OrderTicketPricingInternal(SQLModel):
     amount: int
 
 
-class OrderPricingInternal(SQLModel):
+class OrderCreateInternal(SQLModel):
     """What OrderCalculator decides about a new order.
 
     payment_deadline is required here though the column is nullable: NULL is
     only for rows created before the hold window existed.
     """
+    user_id: int
+    comment: str | None
     tickets: list[OrderTicketPricingInternal]
     checkout_amount: int
     payment_deadline: datetime

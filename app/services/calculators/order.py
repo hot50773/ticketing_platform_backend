@@ -7,11 +7,12 @@ backend says what they cost.
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+from app.exceptions import SeatUnexistError
 from app.libs.clock.functional import now_utc
-from app.schemas.event import EventSeatPriceInternal
+from app.schemas.event import EventSeatsPricingInternal, EventLayoutInternal
 from app.schemas.order import (
     OrderCreate,
-    OrderPricingInternal,
+    OrderCreateInternal,
     OrderTicketPricingInternal,
 )
 
@@ -30,24 +31,31 @@ class OrderCalculator:
         self._payment_window = payment_window
         self._now = clock
 
-    def price_order(
-        self, payload: OrderCreate, seats: list[EventSeatPriceInternal]
-    ) -> OrderPricingInternal:
+    def calculate_order_price(
+        self, payload: OrderCreate, event_seats_pricing: EventSeatsPricingInternal
+    ) -> OrderCreateInternal:
         """Prices every seat at its zone's price, in the order requested.
 
         Runs after validate_seats_orderable, which is what guarantees every
         seat is here and priced. A KeyError or a None amount means the two ran
         out of order - let it fail rather than invent a fallback price.
         """
-        price_by_seat = {seat.event_seat_id: seat.price for seat in seats}
-        tickets = [
-            OrderTicketPricingInternal(
-                event_seat_id=seat_id, amount=price_by_seat[seat_id]
+        event_seat_id_to_price_map = {seat.event_seat_id: seat.price for seat in event_seats_pricing.seats}
+
+        tickets = []
+        for event_seat_id in payload.event_seat_ids:
+            price = event_seat_id_to_price_map.get(event_seat_id)
+            if price is None:
+                raise ValueError("seat price is not set for seat {event_seat_id}".format(event_seat_id=event_seat_id))
+            ticket = OrderTicketPricingInternal(
+                event_seat_id=event_seat_id, amount=price
             )
-            for seat_id in payload.event_seat_ids
-        ]
-        return OrderPricingInternal(
+            tickets += ticket
+
+        return OrderCreateInternal(
             tickets=tickets,
             checkout_amount=sum(ticket.amount for ticket in tickets),
             payment_deadline=self._now() + self._payment_window,
+            user_id=payload.user_id,
+            comment=payload.comment,
         )

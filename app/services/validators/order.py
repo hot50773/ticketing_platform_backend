@@ -21,7 +21,7 @@ from app.exceptions import (
     TicketPriceNotReadyError,
 )
 from app.libs.clock.functional import now_utc
-from app.schemas.event import EventSeatPriceInternal, EventStateInternal
+from app.schemas.event import EventSeatsPricingInternal, EventStateInternal
 from app.schemas.order import OrderCreate, OrderStateInternal
 
 
@@ -51,8 +51,8 @@ class OrderValidator:
             )
 
     @staticmethod
-    def validate_seats_orderable(
-        payload: OrderCreate, seats: list[EventSeatPriceInternal]
+    def validate_seats_input(
+        payload: OrderCreate, event_seats: EventSeatsPricingInternal
     ) -> None:
         """Every requested seat belongs to this event and carries a price.
 
@@ -65,22 +65,24 @@ class OrderValidator:
         Whether somebody else already holds the seat is Redis's call, not this
         one.
         """
-        resolved = {seat.event_seat_id for seat in seats}
-        missing = [
-            seat_id for seat_id in payload.event_seat_ids if seat_id not in resolved
-        ]
-        if missing:
-            raise EntityNotFoundError(
-                EVENT_SEAT_NOT_FOUND_MSG.format(
-                    event_seat_ids=missing, event_id=payload.event_id
-                )
-            )
+        seat_pricing_data = event_seats.seats
 
-        unpriced = sorted({seat.event_zone_id for seat in seats if seat.price is None})
-        if unpriced:
-            raise TicketPriceNotReadyError(
-                f"Ticket price is not set for event zone(s): {unpriced}"
+        existing_seat_ids = {seat.event_seat_id for seat in seat_pricing_data}
+        missing_seat_ids = [
+            seat_id for seat_id in payload.event_seat_ids
+            if seat_id not in existing_seat_ids
+        ]
+        if missing_seat_ids:
+            raise EntityNotFoundError(
+                EVENT_SEAT_NOT_FOUND_MSG.format(event_seat_ids=missing_seat_ids, event_id=payload.event_id)
             )
+        if len(existing_seat_ids) != len(payload.event_seat_ids):
+            raise ValueError("duplicate event_seat_id in {event_seat_ids}".format(event_seat_ids=payload.event_seat_ids))
+
+        unpriced_zone_ids = sorted({seat.event_zone_id for seat in seat_pricing_data if seat.price is None})
+        if unpriced_zone_ids:
+            err_msg = "Ticket price is not set for event zone(s) {event_zone_ids} in event {event_id}".format(event_zone_ids=unpriced_zone_ids, event_id=payload.event_id)
+            raise TicketPriceNotReadyError(err_msg)
 
     def validate_payable(self, state: OrderStateInternal) -> None:
         """flow: not cancelled -> not already settled -> no charge in flight

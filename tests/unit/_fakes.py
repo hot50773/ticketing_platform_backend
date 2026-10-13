@@ -21,11 +21,11 @@ from app.schemas.event import (
     EventSeatSyncCountsInternal,
     EventStateInternal,
     EventZoneWithSeatCountInternal,
-    EventSeatPriceInternal,
+    EventSeatsPricingInternal,
     EventZoneWithSeatInternal,
 )
 from app.schemas.order import (
-    OrderPricingInternal,
+    OrderCreateInternal,
     OrderTicketInternal,
     OrderWithTicketsInternal,
 )
@@ -223,13 +223,13 @@ class FakeEventLayoutCache:
 # --------------------------------------------------------------------------- #
 def a_seat_price(
     event_seat_id: int, price: int | None = 1500, event_zone_id: int = 10
-) -> EventSeatPriceInternal:
-    return EventSeatPriceInternal(
+) -> EventSeatsPricingInternal:
+    return EventSeatsPricingInternal(
         event_seat_id=event_seat_id, event_zone_id=event_zone_id, price=price
     )
 
 
-def an_order(pricing: OrderPricingInternal) -> Order:
+def an_order(pricing: OrderCreateInternal) -> Order:
     """The row the factory's create() would have written for this pricing."""
     return Order(
         id=1,
@@ -249,7 +249,7 @@ def an_order(pricing: OrderPricingInternal) -> Order:
 class FakeOrderAggregate:
     """What place() hands back: only what the mapper reads off it."""
 
-    def __init__(self, calls: list[str], pricing: OrderPricingInternal):
+    def __init__(self, calls: list[str], pricing: OrderCreateInternal):
         self.calls = calls
         self.pricing = pricing
         self.order = an_order(pricing)
@@ -287,12 +287,12 @@ class FakeOrderAggregateFactory:
         self,
         calls: list[str],
         event: Event,
-        seats: list[EventSeatPriceInternal],
+        seats: list[EventSeatsPricingInternal],
     ):
         self.calls = calls
         self._event = event
         self._seats = seats
-        self.created: OrderPricingInternal | None = None
+        self.created: OrderCreateInternal | None = None
 
     @property
     def event_state(self) -> EventStateInternal:
@@ -302,11 +302,11 @@ class FakeOrderAggregateFactory:
             start_at=self._event.start_at,
         )
 
-    async def seat_prices(self) -> list[EventSeatPriceInternal]:
+    async def seat_prices(self) -> list[EventSeatsPricingInternal]:
         self.calls.append("seat_prices")
         return self._seats
 
-    async def create(self, pricing: OrderPricingInternal) -> FakeOrderAggregate:
+    async def create(self, pricing: OrderCreateInternal) -> FakeOrderAggregate:
         self.calls.append("create")
         self.created = pricing
         return FakeOrderAggregate(self.calls, pricing)
@@ -319,7 +319,7 @@ class FakeOrderRepository:
         self,
         is_active: bool = True,
         start_at: datetime | None = None,
-        seats: list[EventSeatPriceInternal] | None = None,
+        seats: list[EventSeatsPricingInternal] | None = None,
     ):
         self.calls: list[str] = []
         event = an_event(is_active)

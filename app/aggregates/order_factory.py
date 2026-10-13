@@ -10,8 +10,12 @@ from sqlmodel import select
 from app.aggregates.event import EventAggregate
 from app.aggregates.order import TICKET_DETAIL_LOADER, OrderAggregate
 from app.models import Order, OrderTicket
-from app.schemas.event import EventSeatPriceInternal, EventStateInternal
-from app.schemas.order import OrderCreate, OrderPricingInternal
+from app.schemas.event import (
+    EventSeatsPricingInternal,
+    EventStateInternal,
+    EventLayoutInternal,
+)
+from app.schemas.order import OrderCreate, OrderCreateInternal
 
 
 class OrderAggregateFactory:
@@ -38,13 +42,15 @@ class OrderAggregateFactory:
     def event_state(self) -> EventStateInternal:
         return self._event.state
 
-    async def seat_prices(self) -> list[EventSeatPriceInternal]:
+    async def seats_pricing(self) -> EventSeatsPricingInternal:
         return await self._event.seat_prices(self._payload.event_seat_ids)
 
+    async def event_layout(self) -> EventLayoutInternal:
+        return await self._event.event_layout()
     # ----------------------------------------------------------------------- #
     # Mutations
     # ----------------------------------------------------------------------- #
-    async def create(self, pricing: OrderPricingInternal) -> OrderAggregate:
+    async def create(self, pricing: OrderCreateInternal) -> OrderAggregate:
         """Inserts the order and its tickets. status / payment_status are left
         to their server defaults, which the re-read brings back.
 

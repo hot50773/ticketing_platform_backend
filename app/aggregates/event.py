@@ -46,14 +46,16 @@ from app.schemas.event import (
     EventProfileUpdate,
     EventSeatDiffInternal,
     EventSeatLayout,
-    EventSeatPriceInternal,
+    EventSeatsPricingInternal,
     EventSeatSyncCountsInternal,
     EventStateInternal,
     EventZoneCreate,
     EventZoneProfileUpdate,
     EventZoneWithSeatCountInternal,
     EventZoneWithSeatInternal,
-    EventLayoutInternal, EventSeatInternal,
+    EventLayoutInternal,
+    EventSeatInternal,
+    SeatPriceInternal,
 )
 
 OCCUPIED_SEAT_STATUS = SeatStatus.RESERVED
@@ -133,7 +135,7 @@ class EventAggregate:
         )
         return EventOrderStatsInternal(active_order_count=total or 0)
 
-    async def seat_prices(self, event_seat_ids: list[int]) -> list[EventSeatPriceInternal]:
+    async def seat_prices(self, event_seat_ids: list[int]) -> EventSeatsPricingInternal:
         """The named seats of this event, each with its zone's price.
 
         Takes ids rather than walking the layout: an order prices a handful of
@@ -143,6 +145,7 @@ class EventAggregate:
         resolve must not silently become part of the order. Its absence from
         the result is the signal; OrderValidator turns that into the 404.
         """
+        event_id = self._event.id
         rows = await self._session.execute(
             self._existing_zones_stmt(self._event.id)
             .add_columns(EventSeat)
@@ -150,12 +153,15 @@ class EventAggregate:
             .where(EventSeat.id.in_(event_seat_ids))
             .where(EventSeat.deleted_at == None)
         )
-        return [
-            EventSeatPriceInternal(
-                event_seat_id=seat.id, event_zone_id=zone.id, price=zone.price
-            )
-            for zone, seat in rows.all()
-        ]
+        return EventSeatsPricingInternal(
+            event_id=event_id,
+            seats=[
+                SeatPriceInternal(
+                    event_seat_id=seat.id, event_zone_id=zone.id, price=zone.price, seat_serial_number=seat.serial_number
+                )
+                for zone, seat in rows.all()
+            ]
+        )
 
     async def occupied_seat_count(self, event_zone_id: int) -> int:
         await self._get_and_check_zone(event_zone_id)
