@@ -1,6 +1,7 @@
 local EXISTENCE_KEY_TPL = "seat_existence_bitmap:event:%s:zone:%s"
 local SOLD_KEY_TPL = "seat_sold_bitmap:event:%s:zone:%s"
 local EXIST_VALUE = 1
+local SOLD_VALUE = 1
 local NOT_SOLD_VALUE = 0
 
 -- TODO: change to 1 single bitfield
@@ -56,14 +57,14 @@ for zone_id, seat_serials in pairs(zone_id_to_seat_serials_map) do
     local sold_key = string.format(SOLD_KEY_TPL, event_id, zone_id)
 
     -- 🌟 效能優化：利用 BITFIELD 批次串接特性，一次抓取該區域所有要驗證的座位
-    is_all_seats_exists, first_unexist_offset = check_all_match(existence_key, seat_serials, EXIST_VALUE)
+    local is_all_seats_exists, first_unexist_offset = check_all_match(existence_key, seat_serials, EXIST_VALUE)
     if not is_all_seats_exists then
-        build_error_response(ERROR_CODE_UNEXIST, event_id, zone_id, first_unexist_offset)
+        return build_error_response(ERROR_CODE_UNEXIST, event_id, zone_id, first_unexist_offset)
     end
 
-    is_all_seats_orderable, first_occupied_offset = check_all_match(sold_key, seat_serials, NOT_SOLD_VALUE)
+    local is_all_seats_orderable, first_occupied_offset = check_all_match(sold_key, seat_serials, NOT_SOLD_VALUE)
     if not is_all_seats_orderable then
-        build_error_response(ERROR_CODE_OCCUPIED, event_id, zone_id, first_occupied_offset)
+        return build_error_response(ERROR_CODE_OCCUPIED, event_id, zone_id, first_occupied_offset)
     end
 end
 
