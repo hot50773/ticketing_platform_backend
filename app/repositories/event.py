@@ -49,9 +49,9 @@ class EventRepository:
         async with self.session_factory() as session:
             try:
                 yield EventAggregate(session, await self._get_and_check_event(session, event_id))
-            except BaseException:
+            except BaseException as e:
                 await session.rollback()
-                raise
+                raise e
 
     @asynccontextmanager
     async def load_for_update(self, event_id: int) -> AsyncIterator[EventAggregate]:
