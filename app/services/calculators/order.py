@@ -50,7 +50,7 @@ class OrderCalculator:
             ticket = OrderTicketPricingInternal(
                 event_seat_id=event_seat_id, amount=price
             )
-            tickets += ticket
+            tickets.append(ticket)
 
         return OrderCreateInternal(
             tickets=tickets,
