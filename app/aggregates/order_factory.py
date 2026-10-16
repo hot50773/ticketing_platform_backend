@@ -76,7 +76,7 @@ class OrderAggregateFactory:
             for ticket in pricing.tickets
         ])
 
-        await self._event.reserve_seats(
+        await self._event.check_and_reserve_seats(
             event_seat_ids=[ticket.event_seat_id for ticket in pricing.tickets],
         )
         await self._session.flush()

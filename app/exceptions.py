@@ -87,6 +87,13 @@ class PaymentDeadlinePassedError(BusinessRuleViolationError):
     seats it held are no longer guaranteed to be its own."""
     pass
 
+class SeatReleaseError(BusinessRuleViolationError):
+    """Raised when releasing seats."""
+    pass
+
+class SeatReserveError(BusinessRuleViolationError):
+    """Raised when reserving seats."""
+    pass
 
 # Messages
 VENUE_NOT_FOUND_MSG = "Venue with id {venue_id} not found"

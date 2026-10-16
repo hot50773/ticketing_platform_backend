@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select
+from sqlalchemy.sql.selectable import and_
 from sqlmodel import select
 
 from app.enums import SeatStatus
@@ -34,6 +35,9 @@ from app.exceptions import (
     EVENT_ZONE_NOT_FOUND_MSG,
     EntityConflictError,
     EntityNotFoundError,
+    SeatOccupiedError,
+    SeatReleaseError,
+    SeatReserveError,
 )
 from app.libs.clock.functional import now_utc
 from app.models import Event, EventSeat, EventZone, Order
@@ -377,20 +381,42 @@ class EventAggregate:
             ],
         )
 
-    async def reserve_seats(self, event_seat_ids: list[int]) -> None:
+    async def check_and_reserve_seats(self, event_seat_ids: list[int]) -> None:
         """Only AVAILABLE seats move; a seat somebody already took is left
         alone rather than raising, so a retried create is a no-op.
         """
-        if not event_seat_ids:
-            return
-
-        await self._session.execute(
+        result = await self._session.execute(
             update(EventSeat)
+            .values(status=SeatStatus.RESERVED)
+            .returning(EventSeat.id)
             .where(EventSeat.id.in_(event_seat_ids))
             .where(EventSeat.deleted_at == None)
             .where(EventSeat.status == SeatStatus.AVAILABLE)
-            .values(status=SeatStatus.RESERVED)
         )
+
+        updated_event_seat_ids = result.scalars().all()
+        if len(updated_event_seat_ids) != len(event_seat_ids):
+            diff_ids = set(event_seat_ids) - set(updated_event_seat_ids)
+            raise SeatReserveError(
+                f"Event seats {diff_ids} could not be reserved because they are deleted or not in 'AVAILABLE' state. "
+            )
+        await self._session.flush()
+
+    async def check_and_release_seats(self, event_seat_ids: list[int]) -> None:
+        result = await self._session.execute(
+            update(EventSeat)
+            .where(EventSeat.id.in_(event_seat_ids))
+            .where(EventSeat.deleted_at == None)
+            .where(EventSeat.status == SeatStatus.RESERVED)
+            .values(status=SeatStatus.AVAILABLE)
+            .returning(EventSeat.id)
+        )
+        updated_event_seat_ids = result.scalars().all()
+        if len(updated_event_seat_ids) != len(event_seat_ids):
+            diff_ids = set(event_seat_ids) - set(updated_event_seat_ids)
+            raise SeatReleaseError(
+                f"Event seats {diff_ids} could not be released because they are deleted or not in a 'RESERVED' state. "
+            )
         await self._session.flush()
 
     # ----------------------------------------------------------------------- #
