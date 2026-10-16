@@ -22,6 +22,7 @@ unpublished and the next publish rewrites the bitmap from scratch.
 """
 import json
 import logging
+from pathlib import Path
 
 from redis import RedisError, ResponseError
 
@@ -36,29 +37,27 @@ from app.schemas.event import (
 
 logger = logging.getLogger(__name__)
 
+def load_lua_scripts(path: Path, encoding: str = "utf-8"):
+    return path.read_text(encoding=encoding)
+
+
+LUA_BASE_DIR = Path(__file__).parent / "lua"
 
 class EventLayoutCache:
-    """Caches event layouts in Redis."""
-    LOCK_SEATS_SCRIPT_PATH = "lua/lock_seats.lua"
+    """Caches seat layouts for event in Redis."""
+    LOCK_SEATS_SCRIPT_PATH = LUA_BASE_DIR / "lock_seats.lua"
 
     SEAT_SOLD_BITMAP_KEY = "seat_sold_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否售出的紀錄表
     SEAT_EXISTENCE_BITMAP_KEY = "seat_existence_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否存在的紀錄表
 
     def __init__(self, redis_client: RedisClient):
         self._redis_client = redis_client
-        self._lock_seats_script = self._redis_client.register_script(self.LOCK_SEATS_SCRIPT_PATH)
+        #  TODO: lua script 的處理拆分成 lua script handler
+        script = load_lua_scripts(self.LOCK_SEATS_SCRIPT_PATH)
+        self._lock_seats_script = self._redis_client.register_script(script)
 
     async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
-        """Warms every zone's existence bitmap in one round trip.
-
-        redis-py pipelines are MULTI/EXEC by default (verified: `transaction`
-        defaults to True); do not pass `transaction=False` here, or another
-        client could read a half-built bitmap mid-write.
-
-        Raises rather than swallowing: the caller runs this inside the publish
-        transaction, so a dead Redis unwinds the publish instead of putting an
-        event on sale with no bitmap behind it.
-        """
+        """Warms every zone's existence bitmap in one round trip."""
         event_id = event_layout.event.id
         try:
             async with self._redis_client.pipeline() as pipeline:
@@ -76,77 +75,50 @@ class EventLayoutCache:
     ) -> None:
         """Buffers one BITFIELD for the zone. Does no I/O - the caller's
         `pipeline.execute()` is what sends it.
-
-        `BitFieldOperation.set()` only accumulates sub-operations in memory;
-        `.execute()` is what renders them into a BITFIELD command and queues it
-        on the pipeline. Miss that call and the pipeline goes out empty.
         """
         key = self.SEAT_EXISTENCE_BITMAP_KEY.format(event_id=event_id, zone_id=zone.id)
-
-        # DEL first, in the same MULTI as the rebuild: BITFIELD only ever sets
-        # bits, so writing over a previous generation of the bitmap would leave
-        # a retired seat's bit standing and resurrect a seat that no longer
-        # exists. Seats can be soft-deleted and re-added for as long as the
-        # event stays unpublished, so this is a live hazard, not a hypothetical.
         pipeline.delete(key)
-        if not zone.seats:
-            return
 
-        bitfield = pipeline.bitfield(key)
-        for seat in zone.seats:
-            self._mark_seat_existence(bitfield=bitfield, offset=seat.serial_number)
-        bitfield.execute()
+        if zone.seats:
+            bitfield = pipeline.bitfield(key)
+            for seat in zone.seats:
+                self._mark_seat_existence(bitfield=bitfield, offset=seat.serial_number)
+            bitfield.execute()
 
     async def clear_event_layouts(self, event_id: int, zone_ids: list[int]) -> None:
-        """Drops every bitmap belonging to an event.
-
-        Called *after* the unpublish / delete has committed, which is the
-        mirror image of the publish ordering and for the same reason: dropping
-        a live event's bitmap would make every seat read as non-existent, while
-        a bitmap left behind on an event that is no longer on sale is inert and
-        gets rebuilt from scratch by the next publish.
-        """
-        if not zone_ids:
-            return
-
-        try:
-            async with self._redis_client.pipeline() as pipeline:
-                for zone_id in zone_ids:
-                    pipeline.delete(
-                        self.SEAT_EXISTENCE_BITMAP_KEY.format(
-                            event_id=event_id, zone_id=zone_id
-                        ),
-                        self.SEAT_SOLD_BITMAP_KEY.format(
-                            event_id=event_id, zone_id=zone_id
-                        ),
-                    )
-                await pipeline.execute()
-        except RedisError:
-            logger.exception("Failed to clear seat bitmaps for event %s", event_id)
-            raise
+        """Drops every bitmap belonging to an event."""
+        if zone_ids:
+            try:
+                async with self._redis_client.pipeline() as pipeline:
+                    for zone_id in zone_ids:
+                        pipeline.delete(
+                            self.SEAT_EXISTENCE_BITMAP_KEY.format(
+                                event_id=event_id, zone_id=zone_id
+                            ),
+                            self.SEAT_SOLD_BITMAP_KEY.format(
+                                event_id=event_id, zone_id=zone_id
+                            ),
+                        )
+                    await pipeline.execute()
+            except RedisError as e:
+                logger.exception("Failed to clear seat bitmaps for event %s", event_id)
+                raise e
 
     @staticmethod
     def _mark_seat_existence(bitfield, offset: int):
-        """serial_number is the bit offset outright - it is 0-based since the
-        7c4e91ab2d38 migration, so there is no arithmetic here to get wrong.
-
-        `.value` is not decoration: redis-py encodes ints with `repr()`, which
-        turns a bare IntEnum member into `<RedisSeatExistence.EXIST: 1>` and
-        earns a "value is not an integer" from Redis. RedisBitUnit is a StrEnum
-        and *is* a str, so it needs no unwrapping.
-        """
+        """serial_number is the bit offset"""
         return bitfield.set(RedisBitUnit.UINT1, offset, RedisSeatExistence.EXIST.value)
+
+    @staticmethod
+    def _mark_seat_release(bitfield, offset: int):
+        """serial_number is the bit offset"""
+        return bitfield.set(RedisBitUnit.UINT1, offset, RedisSeatSoldStatus.NOT_SOLD.value)
 
     async def check_and_lock_seats_atomic(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
         self._lock_seats_script = self._redis_client.register_script(self.LOCK_SEATS_SCRIPT_PATH)
-
         event_id = event_seats_pricing.event_id
-        zone_id_to_seat_serials_map = {}
 
-        for seat in event_seats_pricing.seats:
-            zone_id = seat.event_zone_id
-            seat_serials = zone_id_to_seat_serials_map.get(zone_id, set())
-            zone_id_to_seat_serials_map[zone_id] = seat_serials.add(seat.seat_serial_number)
+        zone_id_to_seat_serials_map = await self.get_zone_id_to_seat_serials_map(event_seats_pricing)
 
         serialized_seats = json.dumps(zone_id_to_seat_serials_map)
         try:
@@ -163,3 +135,35 @@ class EventLayoutCache:
         except RedisError as e:
             logger.exception("Failed to lock seat bitmaps for event %s", event_id)
             raise e
+
+    @staticmethod
+    async def get_zone_id_to_seat_serials_map(event_seats_pricing: EventSeatsPricingInternal) -> dict[int, list]:
+        zone_id_to_seat_serials_map = {}
+
+        for seat in event_seats_pricing.seats:
+            zone_id = seat.event_zone_id
+            seat_serials = zone_id_to_seat_serials_map.get(zone_id, [])
+            zone_id_to_seat_serials_map[zone_id] = seat_serials.append(seat.seat_serial_number)
+        return zone_id_to_seat_serials_map
+
+    async def release_seats(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
+        event_id = event_seats_pricing.event_id
+        zone_id_to_seat_serials_map = (
+            await self.get_zone_id_to_seat_serials_map(event_seats_pricing)
+        )
+        try:
+            async with self._redis_client.pipeline() as pipeline:
+                for zone_id, seat_serials in zone_id_to_seat_serials_map.items():
+                    await self.mark_seats_release_for_zone(pipeline=pipeline, event_id=event_id, zone_id=zone_id, seat_serials=seat_serials)
+                await pipeline.execute()
+        except RedisError as e:
+            logger.exception("Failed to release seats for event %s, zone:seat_serials - %s", event_id, zone_id_to_seat_serials_map)
+            raise e
+
+    async def mark_seats_release_for_zone(self, pipeline, event_id: int, zone_id: int, seat_serials: list[int]) -> None:
+        key = self.SEAT_SOLD_BITMAP_KEY.format(event_id=event_id, zone_id=zone_id)
+        bitfield = pipeline.bitfield(key)
+
+        for serial_number in seat_serials:
+            self._mark_seat_release(bitfield=bitfield, offset=serial_number)
+        bitfield.execute()
