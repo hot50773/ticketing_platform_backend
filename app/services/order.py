@@ -20,6 +20,8 @@ import logging
 from typing import Protocol
 
 from app.cache.event_layout import EventLayoutCache
+from app.models import Order
+from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
 from app.schemas import Page, PaginationParams
 from app.schemas.order import (
@@ -75,6 +77,7 @@ class OrderService:
     def __init__(
         self,
         order_repository: OrderRepository,
+        event_repository: EventRepository,
         order_validator: OrderValidator,
         order_calculator: OrderCalculator,
         order_schema_mapper: OrderSchemaMapper,
@@ -82,6 +85,7 @@ class OrderService:
         event_layout_cache: EventLayoutCache,
     ):
         self._repository = order_repository
+        self._event_repository = event_repository
         self._payment_gateway = payment_gateway
         self._cache = event_layout_cache
         self._validator = order_validator
@@ -137,9 +141,24 @@ class OrderService:
         (order_id, event_seat_id) ignores soft-deleted rows, so the seats
         become buyable again.
         """
+        order = await self._check_and_delete_order(order_id, payload)
+
+        await self.release_seats_by_order(order)
+
+    async def release_seats_by_order(self, order: Order):
+        event_seat_ids = [ticket.event_seat_id for ticket in order.tickets]
+
+        async with self._event_repository.load_for_update(order.event_id) as event_aggr:
+            await event_aggr.check_and_release_seats(event_seat_ids)
+
+            seats_data = await event_aggr.seat_prices(event_seat_ids)
+        await self._cache.release_seats(seats_data)
+
+    async def _check_and_delete_order(self, order_id: int, payload: OrderDelete) -> Order:
         async with self._repository.load_for_update(order_id) as order_aggr:
             self._validator.validate_deletable(order_aggr.state)
             await order_aggr.soft_delete_cascade(payload)
+            return order_aggr.order
 
     async def execute_payment(self, order_id: int, payload: OrderPay) -> OrderResponse:
         """flow: claim -> charge -> settle, as three separate transactions.
