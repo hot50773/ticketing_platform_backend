@@ -39,6 +39,12 @@ from app.schemas.event import (
 
 logger = logging.getLogger(__name__)
 
+# Paired on purpose. If the process is killed between them, these two lines are
+# the only record that seats were locked: the order was never written, so there
+# is nothing in Postgres to find them by.
+SEATS_LOCKED_MSG = "Locked seats in Redis for event %s - zone:serials %s"
+SEATS_UNLOCKED_MSG = "Unlocked seats in Redis for event %s - zone:serials %s"
+
 def load_lua_scripts(path: Path, encoding: str = "utf-8") -> str:
     return path.read_text(encoding=encoding)
 
@@ -133,6 +139,8 @@ class EventLayoutCache:
                 )
                 raise SeatOccupiedError(err_msg)
 
+            logger.info(SEATS_LOCKED_MSG, event_id, zone_id_to_seat_serials_map)
+
         except RedisError as e:
             logger.exception("Failed to lock seat bitmaps for event %s", event_id)
             raise e
@@ -180,6 +188,7 @@ class EventLayoutCache:
                         seat_serials=seat_serials,
                     )
                 await pipeline.execute()
+            logger.info(SEATS_UNLOCKED_MSG, event_id, zone_id_to_seat_serials_map)
         except RedisError as e:
             logger.exception("Failed to release seats for event %s, zone:seat_serials - %s", event_id, zone_id_to_seat_serials_map)
             raise e
