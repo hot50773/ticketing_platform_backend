@@ -4,6 +4,8 @@ These cover what e2e cannot see - that a rejected order never reaches the
 insert, and that the amounts written come from the event rather than from the
 request.
 """
+import asyncio
+import logging
 from datetime import timedelta
 
 import pytest
@@ -20,6 +22,8 @@ from app.services.calculators.order import DEFAULT_PAYMENT_WINDOW, OrderCalculat
 from app.services.mappers.order import OrderSchemaMapper
 from app.services.order import OrderService, UnimplementedPaymentGateway
 from app.services.validators.order import OrderValidator
+from redis import RedisError
+
 from tests.unit._fakes import (
     FakeEventLayoutCache,
     FakeEventRepository,
@@ -126,3 +130,130 @@ async def test_unpriced_zone_never_reaches_the_insert():
         await a_service(repo).create_order(a_payload([1]))
 
     assert repo.calls == ["load_for_create", "seats_pricing"]
+
+
+# --------------------------------------------------------------------------- #
+# The hold outlives its transaction
+#
+# check_and_lock_seats_atomic writes to Redis, which no database rollback can
+# undo. If the insert then fails, the seats stay held by an order that does not
+# exist and nobody can buy them. So the service hands them back itself.
+# --------------------------------------------------------------------------- #
+def a_service_with_cache(
+    repository: FakeOrderRepository, cache: FakeEventLayoutCache
+) -> OrderService:
+    return OrderService(
+        order_repository=repository,
+        event_repository=FakeEventRepository(),
+        order_validator=OrderValidator(),
+        order_calculator=OrderCalculator(),
+        order_schema_mapper=OrderSchemaMapper(),
+        payment_gateway=UnimplementedPaymentGateway(),
+        event_layout_cache=cache,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_lost_race_hands_nothing_back():
+    """The hold belongs to whoever won it - releasing here would hand them
+    somebody else's seats."""
+    repo = FakeOrderRepository()
+    cache = FakeEventLayoutCache(repo.calls, lock_fails=True)
+
+    with pytest.raises(RedisError):
+        await a_service_with_cache(repo, cache).create_order(a_payload())
+
+    assert "release_seats" not in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_a_failed_insert_hands_the_seats_back():
+    repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
+    cache = FakeEventLayoutCache(repo.calls)
+
+    with pytest.raises(RuntimeError, match="insert blew up"):
+        await a_service_with_cache(repo, cache).create_order(a_payload())
+
+    assert repo.calls == [
+        "load_for_create",
+        "seats_pricing",
+        "check_and_lock_seats_atomic",
+        "create",
+        "release_seats",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_seats_handed_back_are_the_ones_that_were_held():
+    """Guards the field rename: SeatPriceInternal calls it seat_serial_number,
+    SeatPositionInternal calls it serial_number."""
+    seats = [a_seat_price(1, event_zone_id=10), a_seat_price(2, event_zone_id=11)]
+    repo = FakeOrderRepository(seats=seats, create_error=RuntimeError("boom"))
+    cache = FakeEventLayoutCache(repo.calls)
+
+    with pytest.raises(RuntimeError):
+        await a_service_with_cache(repo, cache).create_order(a_payload())
+
+    (event_id, handed_back), = cache.released
+    assert event_id == 1
+    assert [(s.event_zone_id, s.serial_number) for s in handed_back] == [(10, 1), (11, 2)]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_handback_does_not_replace_the_real_error():
+    """Whatever broke the insert is what the caller has to debug; a Redis
+    failure on the way out must not take its place."""
+    repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
+    cache = FakeEventLayoutCache(repo.calls, release_fails=True)
+
+    with pytest.raises(RuntimeError, match="insert blew up"):
+        await a_service_with_cache(repo, cache).create_order(a_payload())
+
+
+@pytest.mark.asyncio
+async def test_a_successful_order_hands_nothing_back():
+    repo = FakeOrderRepository()
+    cache = FakeEventLayoutCache(repo.calls)
+
+    await a_service_with_cache(repo, cache).create_order(a_payload())
+
+    assert "release_seats" not in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_a_broken_unlock_is_not_swallowed():
+    """Only a Redis outage is tolerated. A defect in our own unlock code has to
+    surface rather than quietly leave seats locked on every failed order."""
+    repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
+    cache = FakeEventLayoutCache(repo.calls, release_error=TypeError("bug on the way out"))
+
+    with pytest.raises(TypeError, match="bug on the way out") as exc:
+        await a_service_with_cache(repo, cache).create_order(a_payload())
+
+    # Demoted, not lost: the failure that sent us here is still the context.
+    assert isinstance(exc.value.__context__, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_the_log_names_the_seats_left_locked(caplog):
+    """No order exists for these seats, so this log line is the only thing that
+    says which ones are stuck."""
+    seats = [a_seat_price(1, event_zone_id=10), a_seat_price(2, event_zone_id=11)]
+    repo = FakeOrderRepository(seats=seats, create_error=RuntimeError("boom"))
+    cache = FakeEventLayoutCache(repo.calls, release_fails=True)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError):
+        await a_service_with_cache(repo, cache).create_order(a_payload())
+
+    assert "(10, 1)" in caplog.text and "(11, 2)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_being_cancelled_mid_unlock_is_not_swallowed():
+    """A cancelled request still has to stop. Catching BaseException here would
+    log the cancellation as a bug of ours and let the task carry on."""
+    repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
+    cache = FakeEventLayoutCache(repo.calls, release_error=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await a_service_with_cache(repo, cache).create_order(a_payload())

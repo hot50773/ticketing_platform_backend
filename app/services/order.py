@@ -19,10 +19,14 @@ transaction - see its docstring.
 import logging
 from typing import Protocol
 
+from redis import RedisError
+
+
 from app.cache.event_layout import EventLayoutCache
 from app.models import Order
 from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
+from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal
 from app.schemas import Page, PaginationParams
 from app.schemas.order import (
     OrderCreate,
@@ -37,6 +41,14 @@ from app.services.mappers.order import OrderSchemaMapper
 from app.services.validators.order import OrderValidator
 
 logger = logging.getLogger(__name__)
+
+# The only failure that leaves seats locked in Redis with no order in Postgres
+# to find them by, so this line is the only record of which seats are stuck.
+SEATS_STILL_LOCKED_MSG = (
+    "Seats are still locked in Redis for event %s - (zone, serial) %s. No "
+    "order exists for these seats, so nobody can buy them until the cleanup "
+    "job frees them."
+)
 
 
 class PaymentGateway(Protocol):
@@ -101,19 +113,50 @@ class OrderService:
         unpublished or repriced between the rules and the insert. Prices and
         the deadline come from the backend; the request only picks seats.
         """
-        async with self._repository.load_for_create(payload) as order_aggr_factory:
-            # The event rule is a field read and the seat resolution is a
-            # query, so a closed event must be rejected before paying for it.
-            self._validator.validate_event_orderable(order_aggr_factory.event_state)
+        held_seats = None
+        try:
+            async with self._repository.load_for_create(payload) as order_aggr_factory:
+                # The event rule is a field read and the seat resolution is a
+                # query, so a closed event must be rejected before paying for it.
+                self._validator.validate_event_orderable(order_aggr_factory.event_state)
 
-            seats_pricing_data = await order_aggr_factory.seats_pricing()
-            self._validator.validate_seats_input(payload, seats_pricing_data)
+                seats_pricing_data = await order_aggr_factory.seats_pricing()
+                self._validator.validate_seats_input(payload, seats_pricing_data)
 
-            await self._cache.check_and_lock_seats_atomic(seats_pricing_data)
+                await self._cache.check_and_lock_seats_atomic(seats_pricing_data)
+                held_seats = seats_pricing_data
 
-            priced_order = self._calculator.calculate_order_price(payload, seats_pricing_data)
-            order_aggr = await order_aggr_factory.create(priced_order)
-            return self._mapper.to_order_detail(order_aggr.with_tickets())
+                priced_order = self._calculator.calculate_order_price(payload, seats_pricing_data)
+                order_aggr = await order_aggr_factory.create(priced_order)
+                return self._mapper.to_order_detail(order_aggr.with_tickets())
+        except BaseException:
+            # Outside the `async with` on purpose: a failing commit is the one
+            # way to hold seats for an order that does not exist. `None` means
+            # the hold is somebody else's - we lost the race and took nothing.
+            if held_seats is not None:
+                await self._undo_seat_lock(held_seats)
+            raise
+
+    async def _undo_seat_lock(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
+        """Unlocks seats whose order was never created.
+
+        A Redis outage is logged and swallowed - it must not replace the error
+        that caused it. Anything else is a defect of ours and surfaces.
+        """
+        event_id = event_seats_pricing.event_id
+        seats = [
+            SeatPositionInternal(
+                event_zone_id=seat.event_zone_id,
+                serial_number=seat.seat_serial_number,
+            )
+            for seat in event_seats_pricing.seats
+        ]
+        stuck_seats = [(seat.event_zone_id, seat.serial_number) for seat in seats]
+
+        try:
+            await self._cache.release_seats(event_id=event_id, seats=seats)
+        except RedisError:
+            logger.exception(SEATS_STILL_LOCKED_MSG, event_id, stuck_seats)
 
     async def list_orders(self, pagination: PaginationParams) -> Page[OrderResponse]:
         """One page of non-deleted orders, headers only."""
@@ -155,7 +198,16 @@ class OrderService:
         async with self._event_repository.load_for_update(event_id) as event_aggr:
             await event_aggr.check_and_release_seats(event_seat_ids)
 
-        await self._cache.release_seats(event_id=event_id, tickets_data=order_data.tickets)
+        await self._cache.release_seats(
+            event_id=event_id,
+            seats=[
+                SeatPositionInternal(
+                    event_zone_id=ticket.event_zone_id,
+                    serial_number=ticket.serial_number,
+                )
+                for ticket in order_data.tickets
+            ],
+        )
 
     async def _check_and_delete_order(self, order_id: int, payload: OrderDelete) -> OrderWithTicketsInternal:
         async with self._repository.load_for_update(order_id) as order_aggr:

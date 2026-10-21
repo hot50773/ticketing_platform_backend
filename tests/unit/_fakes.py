@@ -23,6 +23,7 @@ from app.schemas.event import (
     EventZoneWithSeatCountInternal,
     EventSeatsPricingInternal,
     EventZoneWithSeatInternal,
+    SeatPositionInternal,
     SeatPriceInternal,
 )
 from app.schemas.order import (
@@ -200,13 +201,24 @@ class FakeEventLayoutCache:
     bitmap behind it.
     """
 
-    def __init__(self, calls: list[str], fail: bool = False):
+    def __init__(
+        self,
+        calls: list[str],
+        fail: bool = False,
+        lock_fails: bool = False,
+        release_fails: bool = False,
+        release_error: Exception | None = None,
+    ):
         self.calls = calls
         self._fail = fail
+        self._lock_fails = lock_fails or fail
+        self._release_error = release_error or (
+            RedisError("fake redis is down") if (release_fails or fail) else None
+        )
         self.warmed: list[EventLayoutInternal] = []
         self.cleared: list[tuple[int, list[int]]] = []
         self.locked: list[EventSeatsPricingInternal] = []
-        self.released: list[tuple[int, list[OrderTicketInternal]]] = []
+        self.released: list[tuple[int, list[SeatPositionInternal]]] = []
 
     async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
         self.calls.append("init_event_layouts")
@@ -224,17 +236,17 @@ class FakeEventLayoutCache:
         self, event_seats_pricing: EventSeatsPricingInternal
     ) -> None:
         self.calls.append("check_and_lock_seats_atomic")
-        if self._fail:
+        if self._lock_fails:
             raise RedisError("fake redis is down")
         self.locked.append(event_seats_pricing)
 
     async def release_seats(
-        self, event_id: int, tickets_data: list[OrderTicketInternal]
+        self, event_id: int, seats: list[SeatPositionInternal]
     ) -> None:
         self.calls.append("release_seats")
-        if self._fail:
-            raise RedisError("fake redis is down")
-        self.released.append((event_id, tickets_data))
+        if self._release_error:
+            raise self._release_error
+        self.released.append((event_id, seats))
 
 
 # --------------------------------------------------------------------------- #
@@ -333,10 +345,12 @@ class FakeOrderAggregateFactory:
         calls: list[str],
         event: Event,
         seats: list[SeatPriceInternal],
+        create_error: Exception | None = None,
     ):
         self.calls = calls
         self._event = event
         self._seats = seats
+        self._create_error = create_error
         self.created: OrderCreateInternal | None = None
 
     @property
@@ -353,6 +367,8 @@ class FakeOrderAggregateFactory:
 
     async def create(self, pricing: OrderCreateInternal) -> FakeOrderAggregate:
         self.calls.append("create")
+        if self._create_error:
+            raise self._create_error
         self.created = pricing
         return FakeOrderAggregate(self.calls, pricing)
 
@@ -365,6 +381,7 @@ class FakeOrderRepository:
         is_active: bool = True,
         start_at: datetime | None = None,
         seats: list[SeatPriceInternal] | None = None,
+        create_error: Exception | None = None,
     ):
         self.calls: list[str] = []
         event = an_event(is_active)
@@ -374,6 +391,7 @@ class FakeOrderRepository:
             self.calls,
             event,
             seats if seats is not None else [a_seat_price(1), a_seat_price(2, 800)],
+            create_error,
         )
 
     @asynccontextmanager

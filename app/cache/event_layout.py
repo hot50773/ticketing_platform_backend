@@ -34,8 +34,8 @@ from app.schemas.event import (
     EventLayoutInternal,
     EventZoneWithSeatInternal,
     EventSeatsPricingInternal,
+    SeatPositionInternal,
 )
-from app.schemas.order import OrderTicketInternal
 
 logger = logging.getLogger(__name__)
 
@@ -158,19 +158,16 @@ class EventLayoutCache:
             for seat in event_seats_pricing.seats
         )
 
-    async def release_seats(self, event_id: int, tickets_data: list[OrderTicketInternal]) -> None:
-        """Clears the sold bits of a released order's seats.
+    async def release_seats(self, event_id: int, seats: list[SeatPositionInternal]) -> None:
+        """Clears the sold bits of seats nobody holds any more.
 
-        Takes the order's tickets rather than an EventSeatsPricingInternal: by
-        the time an order is released its seats have already been handed back
-        in Postgres, so re-reading prices from the event would be a second trip
-        for data the ticket already carries.
+        Grouping them per zone is this layer's business.
         """
-        if not tickets_data:
+        if not seats:
             return
 
         zone_id_to_seat_serials_map = self._group_serials_by_zone(
-            (ticket.event_zone_id, ticket.serial_number) for ticket in tickets_data
+            (seat.event_zone_id, seat.serial_number) for seat in seats
         )
 
         try:

@@ -218,6 +218,13 @@ class SeatPriceInternal(SQLModel):
     price: int | None
 
 
+class SeatPositionInternal(SQLModel):
+    """One seat's place in the layout - all a release needs to know, so both
+    release paths reach the cache through a single entry point."""
+    event_zone_id: int
+    serial_number: int
+
+
 class EventSeatsPricingInternal(SQLModel):
     """The seats one order asked for, carrying the event_id that the Redis
     bitmap keys are built from.
