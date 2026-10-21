@@ -102,10 +102,11 @@ class OrderService:
         the deadline come from the backend; the request only picks seats.
         """
         async with self._repository.load_for_create(payload) as order_aggr_factory:
-            event_state = order_aggr_factory.event_state
-            seats_pricing_data = await order_aggr_factory.seats_pricing()
+            # The event rule is a field read and the seat resolution is a
+            # query, so a closed event must be rejected before paying for it.
+            self._validator.validate_event_orderable(order_aggr_factory.event_state)
 
-            self._validator.validate_event_orderable(event_state)
+            seats_pricing_data = await order_aggr_factory.seats_pricing()
             self._validator.validate_seats_input(payload, seats_pricing_data)
 
             await self._cache.check_and_lock_seats_atomic(seats_pricing_data)
