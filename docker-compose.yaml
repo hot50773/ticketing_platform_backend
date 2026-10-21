@@ -1,24 +1,49 @@
-version: '3.8'
+# Local development stack for this repository.
+#
+# Previously this file bind-mounted ~/docker_volumn/redis_autocomplete/ and
+# claimed the container names postgres_db / redis_cache, so it shared one
+# Postgres instance and one data directory with that unrelated project.
+#
+#   docker compose up -d
+#   uv run alembic upgrade head
+#   docker compose exec db psql -U postgres -d ticketing_platform_noai
+#
+# `name` is the only place the project is spelled; containers, volumes and the
+# network derive from it. Ports are offset so this, redis_autocomplete (5432 /
+# 6379) and docker-compose.test.yaml (55432 / 56379) all run side by side.
+name: ticketing-platform-noai-dev
 
 services:
   db:
     image: postgres:16-alpine
-    container_name: postgres_db
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ticketing_platform_noai}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-15432}:5432"
     volumes:
-      - ~/docker_volumn/redis_autocomplete/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis/redis-stack-server:latest
-    container_name: redis_cache
-    restart: always
+    restart: unless-stopped
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-16379}:6379"
     volumes:
-      - ~/docker_volumn/redis_autocomplete/redis_client:/data
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
