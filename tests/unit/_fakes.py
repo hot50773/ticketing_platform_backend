@@ -23,6 +23,7 @@ from app.schemas.event import (
     EventZoneWithSeatCountInternal,
     EventSeatsPricingInternal,
     EventZoneWithSeatInternal,
+    SeatPriceInternal,
 )
 from app.schemas.order import (
     OrderCreateInternal,
@@ -204,6 +205,8 @@ class FakeEventLayoutCache:
         self._fail = fail
         self.warmed: list[EventLayoutInternal] = []
         self.cleared: list[tuple[int, list[int]]] = []
+        self.locked: list[EventSeatsPricingInternal] = []
+        self.released: list[tuple[int, list[OrderTicketInternal]]] = []
 
     async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
         self.calls.append("init_event_layouts")
@@ -217,16 +220,58 @@ class FakeEventLayoutCache:
             raise RedisError("fake redis is down")
         self.cleared.append((event_id, zone_ids))
 
+    async def check_and_lock_seats_atomic(
+        self, event_seats_pricing: EventSeatsPricingInternal
+    ) -> None:
+        self.calls.append("check_and_lock_seats_atomic")
+        if self._fail:
+            raise RedisError("fake redis is down")
+        self.locked.append(event_seats_pricing)
+
+    async def release_seats(
+        self, event_id: int, tickets_data: list[OrderTicketInternal]
+    ) -> None:
+        self.calls.append("release_seats")
+        if self._fail:
+            raise RedisError("fake redis is down")
+        self.released.append((event_id, tickets_data))
+
 
 # --------------------------------------------------------------------------- #
 # Order side
 # --------------------------------------------------------------------------- #
 def a_seat_price(
-    event_seat_id: int, price: int | None = 1500, event_zone_id: int = 10
-) -> EventSeatsPricingInternal:
-    return EventSeatsPricingInternal(
-        event_seat_id=event_seat_id, event_zone_id=event_zone_id, price=price
+    event_seat_id: int,
+    price: int | None = 1500,
+    event_zone_id: int = 10,
+    seat_serial_number: int | None = None,
+) -> SeatPriceInternal:
+    """One resolved seat at its zone's price.
+
+    serial_number defaults to the seat id: the unit tests never touch a real
+    bitmap, so the only property that has to hold is that two seats in a zone
+    get two different bit offsets.
+    """
+    return SeatPriceInternal(
+        event_seat_id=event_seat_id,
+        event_zone_id=event_zone_id,
+        seat_serial_number=(
+            seat_serial_number if seat_serial_number is not None else event_seat_id
+        ),
+        price=price,
     )
+
+
+def a_seats_pricing(
+    seats: list[SeatPriceInternal], event_id: int = 1
+) -> EventSeatsPricingInternal:
+    """What the factory resolves a cart into.
+
+    Lives here rather than in each test module because the validator, the
+    calculator and the service all take this one shape - three private copies
+    are what let them drift out of sync with the schema last time.
+    """
+    return EventSeatsPricingInternal(event_id=event_id, seats=seats)
 
 
 def an_order(pricing: OrderCreateInternal) -> Order:
@@ -287,7 +332,7 @@ class FakeOrderAggregateFactory:
         self,
         calls: list[str],
         event: Event,
-        seats: list[EventSeatsPricingInternal],
+        seats: list[SeatPriceInternal],
     ):
         self.calls = calls
         self._event = event
@@ -302,9 +347,9 @@ class FakeOrderAggregateFactory:
             start_at=self._event.start_at,
         )
 
-    async def seat_prices(self) -> list[EventSeatsPricingInternal]:
-        self.calls.append("seat_prices")
-        return self._seats
+    async def seats_pricing(self) -> EventSeatsPricingInternal:
+        self.calls.append("seats_pricing")
+        return a_seats_pricing(self._seats, event_id=self._event.id)
 
     async def create(self, pricing: OrderCreateInternal) -> FakeOrderAggregate:
         self.calls.append("create")
@@ -319,7 +364,7 @@ class FakeOrderRepository:
         self,
         is_active: bool = True,
         start_at: datetime | None = None,
-        seats: list[EventSeatsPricingInternal] | None = None,
+        seats: list[SeatPriceInternal] | None = None,
     ):
         self.calls: list[str] = []
         event = an_event(is_active)

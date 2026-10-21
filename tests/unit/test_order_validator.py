@@ -13,9 +13,10 @@ from app.exceptions import (
     EventStartedError,
     TicketPriceNotReadyError,
 )
-from app.schemas.event import EventSeatsPricingInternal, EventStateInternal
+from app.schemas.event import EventStateInternal
 from app.schemas.order import OrderCreate
 from app.services.validators.order import OrderValidator
+from tests.unit._fakes import a_seat_price as seat, a_seats_pricing
 
 NOW = datetime(2026, 9, 30, 0, 0, 0, tzinfo=timezone.utc)
 EVENT_ID = 7
@@ -34,10 +35,8 @@ def event_state(is_active: bool = True, start_at: datetime | None = None):
     )
 
 
-def seat(event_seat_id: int, price: int | None = 1500, event_zone_id: int = 10):
-    return EventSeatsPricingInternal(
-        event_seat_id=event_seat_id, event_zone_id=event_zone_id, price=price
-    )
+def a_pricing(*seats):
+    return a_seats_pricing(list(seats), event_id=EVENT_ID)
 
 
 def payload(event_seat_ids: list[int], event_id: int = EVENT_ID):
@@ -82,22 +81,22 @@ def test_event_starting_exactly_now_is_rejected(validator):
 # B. validate_seats_orderable
 # --------------------------------------------------------------------------- #
 def test_every_requested_seat_resolved_and_priced_passes(validator):
-    validator.validate_seats_input(payload([1, 2]), [seat(1), seat(2)])
+    validator.validate_seats_input(payload([1, 2]), a_pricing(seat(1), seat(2)))
 
 
 def test_unresolved_seat_is_not_found(validator):
     """A seat that does not exist, was deleted, or belongs to another event all
     arrive here the same way: absent from the resolved list."""
     with pytest.raises(EntityNotFoundError) as exc:
-        validator.validate_seats_input(payload([1, 2]), [seat(1)])
+        validator.validate_seats_input(payload([1, 2]), a_pricing(seat(1)))
     assert "2" in str(exc.value)
 
 
 def test_unpriced_zone_is_rejected(validator):
     with pytest.raises(TicketPriceNotReadyError):
-        validator.validate_seats_input(payload([1]), [seat(1, price=None)])
+        validator.validate_seats_input(payload([1]), a_pricing(seat(1, price=None)))
 
 
 def test_free_seat_is_not_an_unpriced_seat(validator):
     """0 is a price - a genuinely free zone - and only NULL means unset."""
-    validator.validate_seats_input(payload([1]), [seat(1, price=0)])
+    validator.validate_seats_input(payload([1]), a_pricing(seat(1, price=0)))

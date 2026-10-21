@@ -20,16 +20,25 @@ from app.services.calculators.order import DEFAULT_PAYMENT_WINDOW, OrderCalculat
 from app.services.mappers.order import OrderSchemaMapper
 from app.services.order import OrderService, UnimplementedPaymentGateway
 from app.services.validators.order import OrderValidator
-from tests.unit._fakes import FakeOrderRepository, a_seat_price
+from tests.unit._fakes import (
+    FakeEventLayoutCache,
+    FakeEventRepository,
+    FakeOrderRepository,
+    a_seat_price,
+)
 
 
 def a_service(repository: FakeOrderRepository) -> OrderService:
+    """The cache fake shares the repository's `calls` list, so the assertions
+    below see where the Redis hold lands relative to the insert."""
     return OrderService(
         order_repository=repository,
+        event_repository=FakeEventRepository(),
         order_validator=OrderValidator(),
         order_calculator=OrderCalculator(),
         order_schema_mapper=OrderSchemaMapper(),
         payment_gateway=UnimplementedPaymentGateway(),
+        event_layout_cache=FakeEventLayoutCache(repository.calls),
     )
 
 
@@ -44,7 +53,13 @@ async def test_create_order_opens_one_transaction():
     repo = FakeOrderRepository()
     result = await a_service(repo).create_order(a_payload())
 
-    assert repo.calls == ["load_for_create", "seat_prices", "create", "with_tickets"]
+    assert repo.calls == [
+        "load_for_create",
+        "seats_pricing",
+        "check_and_lock_seats_atomic",
+        "create",
+        "with_tickets",
+    ]
     assert [ticket.event_seat_id for ticket in result.tickets] == [1, 2]
 
 
@@ -100,7 +115,7 @@ async def test_seat_from_another_event_never_reaches_the_insert():
     with pytest.raises(EntityNotFoundError):
         await a_service(repo).create_order(a_payload([1, 2]))
 
-    assert repo.calls == ["load_for_create", "seat_prices"]
+    assert repo.calls == ["load_for_create", "seats_pricing"]
 
 
 @pytest.mark.asyncio
@@ -110,4 +125,4 @@ async def test_unpriced_zone_never_reaches_the_insert():
     with pytest.raises(TicketPriceNotReadyError):
         await a_service(repo).create_order(a_payload([1]))
 
-    assert repo.calls == ["load_for_create", "seat_prices"]
+    assert repo.calls == ["load_for_create", "seats_pricing"]
