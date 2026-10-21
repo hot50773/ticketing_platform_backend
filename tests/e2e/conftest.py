@@ -35,9 +35,10 @@ def db_database(container: Container):
 
 @pytest.fixture(autouse=True)
 async def clean_state(container: Container) -> AsyncGenerator[None, None]:
-    """Truncates every table before each test.
+    """Truncates every table and flushes Redis before each test.
 
-    No Redis teardown: the seat-status cache is not implemented yet.
+    A leftover sold bit makes the next test fail to lock a seat it never
+    touched. tests/conftest.py is what keeps this off the developer's stack.
     """
     container.db.reset()
 
@@ -50,6 +51,8 @@ async def clean_state(container: Container) -> AsyncGenerator[None, None]:
             )
         )
         await session.commit()
+
+    await container.redis_client().flushdb()
 
     yield
 

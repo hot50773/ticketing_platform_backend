@@ -1,9 +1,16 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# tests/conftest.py sets this before importing app.config: `settings` below is
+# built at import time, so a later switch is too late. alembic shares it.
+ENV_FILE = os.getenv("ENV_FILE", ".env")
+
 
 class Settings(BaseSettings):
     # Without this, pydantic-settings reads real environment variables only and
     # every value below silently stays at its default.
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 
     postgres_user: str = "postgres"
     postgres_password: str = "postgres_password"
