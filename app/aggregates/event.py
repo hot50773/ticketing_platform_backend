@@ -382,9 +382,6 @@ class EventAggregate:
         )
 
     async def check_and_reserve_seats(self, event_seat_ids: list[int]) -> None:
-        """Only AVAILABLE seats move; a seat somebody already took is left
-        alone rather than raising, so a retried create is a no-op.
-        """
         result = await self._session.execute(
             update(EventSeat)
             .values(status=SeatStatus.RESERVED)
