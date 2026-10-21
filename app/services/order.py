@@ -30,6 +30,7 @@ from app.schemas.order import (
     OrderDetailResponse,
     OrderPay,
     OrderResponse,
+    OrderWithTicketsInternal,
 )
 from app.services.calculators.order import OrderCalculator
 from app.services.mappers.order import OrderSchemaMapper
@@ -141,47 +142,27 @@ class OrderService:
         (order_id, event_seat_id) ignores soft-deleted rows, so the seats
         become buyable again.
         """
-        order = await self._check_and_delete_order(order_id, payload)
+        order_data = await self._check_and_delete_order(order_id, payload)
 
-        await self.release_seats_by_order(order)
+        await self.release_seats_by_order(order_data)
+        # TODO: 要有排程定期清票，讓 Redis 沒有正確釋放的票被處理
 
-    async def release_seats_by_order(self, order: Order):
-        event_seat_ids = [ticket.event_seat_id for ticket in order.tickets]
+    async def release_seats_by_order(self, order_data: OrderWithTicketsInternal):
+        event_id = order_data.order.event_id
+        event_seat_ids = [ticket.event_seat_id for ticket in order_data.tickets]
 
-        async with self._event_repository.load_for_update(order.event_id) as event_aggr:
+        async with self._event_repository.load_for_update(event_id) as event_aggr:
             await event_aggr.check_and_release_seats(event_seat_ids)
 
-            seats_data = await event_aggr.seat_prices(event_seat_ids)
-        await self._cache.release_seats(seats_data)
+        await self._cache.release_seats(event_id=event_id, tickets_data=order_data.tickets)
 
-    async def _check_and_delete_order(self, order_id: int, payload: OrderDelete) -> Order:
+    async def _check_and_delete_order(self, order_id: int, payload: OrderDelete) -> OrderWithTicketsInternal:
         async with self._repository.load_for_update(order_id) as order_aggr:
             self._validator.validate_deletable(order_aggr.state)
             await order_aggr.soft_delete_cascade(payload)
-            return order_aggr.order
+            return order_aggr.with_tickets()
 
     async def execute_payment(self, order_id: int, payload: OrderPay) -> OrderResponse:
-        """flow: claim -> charge -> settle, as three separate transactions.
-
-        Splitting them is the point, not an accident. A database transaction
-        must not stay open across a call to a payment provider: the call can
-        hang for as long as the provider's timeout, and holding `FOR UPDATE` on
-        the order for that whole window would pile up every retry behind it.
-
-        Each step therefore commits on its own:
-
-          1. claim   - assert payable, write IN_PROGRESS, commit. A second
-                       request now finds IN_PROGRESS and is rejected, which is
-                       what stops a double charge.
-          2. charge  - no transaction held. On failure, a compensating
-                       transaction writes FAILED so the customer can retry.
-          3. settle  - write SUCCESS / CONFIRMED.
-
-        The gap this leaves: a crash between 2 and 3 strands the order at
-        IN_PROGRESS with the money taken. That is not recoverable from inside
-        this request - it needs a reconciliation job that asks the provider
-        what actually happened. Left explicit here rather than pretended away.
-        """
         async with self._repository.load_for_update(order_id) as order_aggr:
             self._validator.validate_payable(order_aggr.state)
             amount = order_aggr.order.checkout_amount

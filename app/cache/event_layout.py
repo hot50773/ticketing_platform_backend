@@ -22,6 +22,7 @@ unpublished and the next publish rewrites the bitmap from scratch.
 """
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 
 from redis import RedisError, ResponseError
@@ -34,10 +35,11 @@ from app.schemas.event import (
     EventZoneWithSeatInternal,
     EventSeatsPricingInternal,
 )
+from app.schemas.order import OrderTicketInternal
 
 logger = logging.getLogger(__name__)
 
-def load_lua_scripts(path: Path, encoding: str = "utf-8"):
+def load_lua_scripts(path: Path, encoding: str = "utf-8") -> str:
     return path.read_text(encoding=encoding)
 
 
@@ -115,10 +117,9 @@ class EventLayoutCache:
         return bitfield.set(RedisBitUnit.UINT1, offset, RedisSeatSoldStatus.NOT_SOLD.value)
 
     async def check_and_lock_seats_atomic(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
-        self._lock_seats_script = self._redis_client.register_script(self.LOCK_SEATS_SCRIPT_PATH)
         event_id = event_seats_pricing.event_id
 
-        zone_id_to_seat_serials_map = await self.get_zone_id_to_seat_serials_map(event_seats_pricing)
+        zone_id_to_seat_serials_map = self.get_zone_id_to_seat_serials_map(event_seats_pricing)
 
         serialized_seats = json.dumps(zone_id_to_seat_serials_map)
         try:
@@ -137,30 +138,59 @@ class EventLayoutCache:
             raise e
 
     @staticmethod
-    async def get_zone_id_to_seat_serials_map(event_seats_pricing: EventSeatsPricingInternal) -> dict[int, list]:
-        zone_id_to_seat_serials_map = {}
+    def _group_serials_by_zone(seats: Iterable[tuple[int, int]]) -> dict[int, list[int]]:
+        """(zone_id, serial_number) pairs -> one bitmap target per zone.
 
-        for seat in event_seats_pricing.seats:
-            zone_id = seat.event_zone_id
-            seat_serials = zone_id_to_seat_serials_map.get(zone_id, [])
-            zone_id_to_seat_serials_map[zone_id] = seat_serials.append(seat.seat_serial_number)
-        return zone_id_to_seat_serials_map
+        Both bitmap keys are per-zone, so every write path has to fan its seats
+        out this way first. Shared so the lock and release paths cannot drift.
+        """
+        grouped: dict[int, list[int]] = {}
+        for zone_id, serial_number in seats:
+            grouped.setdefault(zone_id, []).append(serial_number)
+        return grouped
 
-    async def release_seats(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
-        event_id = event_seats_pricing.event_id
-        zone_id_to_seat_serials_map = (
-            await self.get_zone_id_to_seat_serials_map(event_seats_pricing)
+    @classmethod
+    def get_zone_id_to_seat_serials_map(
+        cls, event_seats_pricing: EventSeatsPricingInternal
+    ) -> dict[int, list[int]]:
+        return cls._group_serials_by_zone(
+            (seat.event_zone_id, seat.seat_serial_number)
+            for seat in event_seats_pricing.seats
         )
+
+    async def release_seats(self, event_id: int, tickets_data: list[OrderTicketInternal]) -> None:
+        """Clears the sold bits of a released order's seats.
+
+        Takes the order's tickets rather than an EventSeatsPricingInternal: by
+        the time an order is released its seats have already been handed back
+        in Postgres, so re-reading prices from the event would be a second trip
+        for data the ticket already carries.
+        """
+        if not tickets_data:
+            return
+
+        zone_id_to_seat_serials_map = self._group_serials_by_zone(
+            (ticket.event_zone_id, ticket.serial_number) for ticket in tickets_data
+        )
+
         try:
             async with self._redis_client.pipeline() as pipeline:
                 for zone_id, seat_serials in zone_id_to_seat_serials_map.items():
-                    await self.mark_seats_release_for_zone(pipeline=pipeline, event_id=event_id, zone_id=zone_id, seat_serials=seat_serials)
+                    self.mark_seats_release_for_zone(
+                        pipeline=pipeline,
+                        event_id=event_id,
+                        zone_id=zone_id,
+                        seat_serials=seat_serials,
+                    )
                 await pipeline.execute()
         except RedisError as e:
             logger.exception("Failed to release seats for event %s, zone:seat_serials - %s", event_id, zone_id_to_seat_serials_map)
             raise e
 
-    async def mark_seats_release_for_zone(self, pipeline, event_id: int, zone_id: int, seat_serials: list[int]) -> None:
+    def mark_seats_release_for_zone(
+        self, pipeline, event_id: int, zone_id: int, seat_serials: list[int]
+    ) -> None:
+        """Buffers one BITFIELD clearing the zone's sold bits. Does no I/O."""
         key = self.SEAT_SOLD_BITMAP_KEY.format(event_id=event_id, zone_id=zone_id)
         bitfield = pipeline.bitfield(key)
 
