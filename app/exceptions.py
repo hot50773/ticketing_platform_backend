@@ -101,5 +101,9 @@ ZONE_NOT_FOUND_MSG = "Zone with id {zone_id} not found"
 SEAT_NOT_FOUND_MSG = "Seat with id {seat_id} not found"
 EVENT_NOT_FOUND_MSG = "Event with id {event_id} not found"
 EVENT_ZONE_NOT_FOUND_MSG = "EventZone with id {event_zone_id} not found in event {event_id}"
+EVENT_SEAT_NOT_RELEASABLE_MSG = (
+    "Event seats {event_seat_ids} could not be released: they are soft-deleted "
+    "or do not exist."
+)
 EVENT_SEAT_NOT_FOUND_MSG = "EventSeat(s) {event_seat_ids} not found in event {event_id}"
 ORDER_NOT_FOUND_MSG = "Order with id {order_id} not found"

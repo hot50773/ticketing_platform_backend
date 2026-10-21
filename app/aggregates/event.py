@@ -20,6 +20,7 @@ The booking flow takes `FOR SHARE` on the same row before creating an order
 `seat_prices()` without an admin changing either underneath. `FOR UPDATE` on
 the booking path would serialise every purchase for an event - do not.
 """
+import logging
 from collections.abc import Sequence
 
 from sqlalchemy import func, update
@@ -36,6 +37,7 @@ from app.exceptions import (
     EntityConflictError,
     EntityNotFoundError,
     SeatOccupiedError,
+    EVENT_SEAT_NOT_RELEASABLE_MSG,
     SeatReleaseError,
     SeatReserveError,
 )
@@ -63,6 +65,9 @@ from app.schemas.event import (
 )
 
 OCCUPIED_SEAT_STATUS = SeatStatus.RESERVED
+
+
+logger = logging.getLogger(__name__)
 
 
 class EventAggregate:
@@ -399,7 +404,13 @@ class EventAggregate:
             )
         await self._session.flush()
 
-    async def check_and_release_seats(self, event_seat_ids: list[int]) -> None:
+    async def check_and_release_seats(self, event_seat_ids: list[int]) -> list[int]:
+        """Hands seats back, and reports which ones this call actually moved.
+
+        Idempotent: the release worker re-runs this after a partial failure, so
+        a seat already AVAILABLE is a repeat, not a failure. A leftover that is
+        soft-deleted or gone still raises.
+        """
         result = await self._session.execute(
             update(EventSeat)
             .where(EventSeat.id.in_(event_seat_ids))
@@ -408,13 +419,34 @@ class EventAggregate:
             .values(status=SeatStatus.AVAILABLE)
             .returning(EventSeat.id)
         )
-        updated_event_seat_ids = result.scalars().all()
-        if len(updated_event_seat_ids) != len(event_seat_ids):
-            diff_ids = set(event_seat_ids) - set(updated_event_seat_ids)
-            raise SeatReleaseError(
-                f"Event seats {diff_ids} could not be released because they are deleted or not in a 'RESERVED' state. "
-            )
-        await self._session.flush()
+        released_event_seat_ids = list(result.scalars().all())
+
+        leftover_ids = set(event_seat_ids) - set(released_event_seat_ids)
+        if leftover_ids:
+            repeated_ids = await self._present_seat_ids(leftover_ids)
+            unexplained_ids = sorted(leftover_ids - repeated_ids)
+            if unexplained_ids:
+                raise SeatReleaseError(
+                    EVENT_SEAT_NOT_RELEASABLE_MSG.format(event_seat_ids=unexplained_ids)
+                )
+            logger.info("Event seats %s were already released", sorted(repeated_ids))
+
+        return released_event_seat_ids
+
+    async def _present_seat_ids(self, event_seat_ids: set[int]) -> set[int]:
+        """Of the seats the update did not move, the ones still on the layout.
+
+        Those are the tolerated repeats: SeatStatus holds only AVAILABLE and
+        RESERVED, so a live row the update skipped is already AVAILABLE. Giving
+        the enum a third member makes that inference wrong, and this is where it
+        would have to be re-checked.
+        """
+        result = await self._session.execute(
+            select(EventSeat.id)
+            .where(EventSeat.id.in_(event_seat_ids))
+            .where(EventSeat.deleted_at == None)
+        )
+        return set(result.scalars().all())
 
     # ----------------------------------------------------------------------- #
     # Internals
