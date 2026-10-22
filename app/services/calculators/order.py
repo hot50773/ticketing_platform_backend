@@ -7,7 +7,6 @@ backend says what they cost.
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-from app.exceptions import SeatUnexistError
 from app.libs.clock.functional import now_utc
 from app.schemas.event import EventSeatsPricingInternal, EventLayoutInternal
 from app.schemas.order import (

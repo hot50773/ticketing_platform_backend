@@ -8,7 +8,13 @@ import logging
 
 import pytest
 
+from app.cache.event_layout import EventLayoutCache
 from app.containers import Container
+from app.exceptions import (
+    SeatOccupiedError,
+    SeatUnexistError,
+    UnknownSeatLockFailureError,
+)
 from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal, SeatPriceInternal
 
 
@@ -93,3 +99,46 @@ async def test_a_released_seat_can_be_locked_again(warmed_event):
         ],
     )
     await cache.check_and_lock_seats_atomic(pricing)
+
+
+# --------------------------------------------------------------------------- #
+# Why the lock failed
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_a_seat_that_is_not_on_the_layout_says_so(warmed_event):
+    """Reporting this as taken sends the customer back to refresh and retry a
+    seat that was never there."""
+    phantom = SeatPriceInternal(
+        event_seat_id=9999,
+        event_zone_id=warmed_event["seats"][0].event_zone_id,
+        seat_serial_number=99,
+        price=1500,
+    )
+
+    with pytest.raises(SeatUnexistError) as exc:
+        await warmed_event["cache"].check_and_lock_seats_atomic(
+            EventSeatsPricingInternal(event_id=warmed_event["event_id"], seats=[phantom])
+        )
+
+    assert "99" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_a_seat_somebody_already_took_says_so(warmed_event):
+    cache, event_id, seats = (
+        warmed_event["cache"], warmed_event["event_id"], warmed_event["seats"]
+    )
+    pricing = EventSeatsPricingInternal(event_id=event_id, seats=seats)
+    await cache.check_and_lock_seats_atomic(pricing)
+
+    with pytest.raises(SeatOccupiedError):
+        await cache.check_and_lock_seats_atomic(pricing)
+
+
+def test_a_reason_nobody_handles_is_not_guessed_at():
+    """The branch that keeps the next failure code from inheriting "already
+    taken" by default."""
+    with pytest.raises(UnknownSeatLockFailureError):
+        EventLayoutCache._raise_lock_failure(
+            err_code="SEAT_SOMETHING_NEW", event_id=1, zone_id=2, seat_serial=3
+        )

@@ -52,3 +52,9 @@ class RedisSeatSoldStatus(enum.IntEnum):
 class RedisResultStatus(enum.IntEnum):
     SUCCESS = 1
     FAILED = 0
+
+
+class RedisSeatLockFailure(enum.StrEnum):
+    """lock_seats.lua 回報的失敗原因。值必須與該腳本裡的字面值一致。"""
+    UNEXIST = "SEAT_UNEXIST_ERROR" # 座位不在版面上
+    OCCUPIED = "SEAT_OCCUPIED_ERROR" # 座位已被佔走

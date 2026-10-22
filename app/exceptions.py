@@ -42,7 +42,17 @@ class SeatOccupiedError(BusinessRuleViolationError):
     """Raised when reshaping a zone whose seats are locked or reserved."""
     pass
 
+class UnknownSeatLockFailureError(Exception):
+    """Raised when lock_seats.lua reports a reason the Python side does not
+    handle. Not a BusinessRuleViolationError: nobody broke a rule, the script
+    and RedisSeatLockFailure have drifted apart."""
+    pass
+
+
 class SeatUnexistError(BusinessRuleViolationError):
+    """Raised when ordering a seat that is not on the event's layout at all.
+    Distinct from SeatOccupiedError: the seat was never there, so telling the
+    customer it is taken would send them back to refresh and try again."""
     pass
 
 
@@ -104,6 +114,14 @@ EVENT_ZONE_NOT_FOUND_MSG = "EventZone with id {event_zone_id} not found in event
 EVENT_SEAT_NOT_RELEASABLE_MSG = (
     "Event seats {event_seat_ids} could not be released: they are soft-deleted "
     "or do not exist."
+)
+EVENT_SEAT_UNEXIST_MSG = (
+    "Seat serial {seat_serial} is not on the layout of event #{event_id} "
+    "zone #{zone_id}."
+)
+EVENT_SEAT_OCCUPIED_MSG = (
+    "Seat serial {seat_serial} in event #{event_id} zone #{zone_id} is "
+    "already taken."
 )
 EVENT_SEAT_NOT_FOUND_MSG = "EventSeat(s) {event_seat_ids} not found in event {event_id}"
 ORDER_NOT_FOUND_MSG = "Order with id {order_id} not found"

@@ -24,12 +24,26 @@ import json
 import logging
 from collections.abc import Iterable
 from pathlib import Path
+from typing import NoReturn
 
 from redis import RedisError, ResponseError
 
 from app.db.redis import RedisClient
-from app.enums import RedisBitUnit, RedisSeatExistence, RedisSeatSoldStatus, RedisResultStatus
-from app.exceptions import SeatOccupiedError, EntityNotFoundError
+from app.enums import (
+    RedisBitUnit,
+    RedisResultStatus,
+    RedisSeatExistence,
+    RedisSeatLockFailure,
+    RedisSeatSoldStatus,
+)
+from app.exceptions import (
+    EVENT_SEAT_OCCUPIED_MSG,
+    EVENT_SEAT_UNEXIST_MSG,
+    EntityNotFoundError,
+    SeatOccupiedError,
+    SeatUnexistError,
+    UnknownSeatLockFailureError,
+)
 from app.schemas.event import (
     EventLayoutInternal,
     EventZoneWithSeatInternal,
@@ -131,19 +145,41 @@ class EventLayoutCache:
         try:
             result = await self._lock_seats_script(keys=[], args=[event_id, serialized_seats])
             if result[0] == RedisResultStatus.FAILED:
-                err_code, err_event_id, err_zone_id, err_seat_serial = result[1:]
-                err_msg = "Seat Serial {seat_serial} in Event #{event_id} Zone #{zone_id} is occupied.".format(
-                    seat_serial=err_seat_serial,
+                # build_error_response in lock_seats.lua decides this order.
+                _, err_code, err_event_id, err_zone_id, err_seat_serial = result
+                self._raise_lock_failure(
+                    err_code=err_code,
                     event_id=err_event_id,
                     zone_id=err_zone_id,
+                    seat_serial=err_seat_serial,
                 )
-                raise SeatOccupiedError(err_msg)
 
             logger.info(SEATS_LOCKED_MSG, event_id, zone_id_to_seat_serials_map)
 
         except RedisError as e:
             logger.exception("Failed to lock seat bitmaps for event %s", event_id)
             raise e
+
+    @staticmethod
+    def _raise_lock_failure(
+        err_code: str, event_id: int, zone_id: int, seat_serial: int
+    ) -> NoReturn:
+        """Turns the script's reason code into the matching exception.
+
+        `match` rather than if/else: an else branch would quietly report a code
+        nobody has handled yet as "already taken" - the exact lie this replaced.
+        """
+        where = {"seat_serial": seat_serial, "event_id": event_id, "zone_id": zone_id}
+        match err_code:
+            case RedisSeatLockFailure.UNEXIST:
+                raise SeatUnexistError(EVENT_SEAT_UNEXIST_MSG.format(**where))
+            case RedisSeatLockFailure.OCCUPIED:
+                raise SeatOccupiedError(EVENT_SEAT_OCCUPIED_MSG.format(**where))
+            case _:
+                raise UnknownSeatLockFailureError(
+                    f"lock_seats.lua returned {err_code!r}, which "
+                    f"RedisSeatLockFailure does not list"
+                )
 
     @staticmethod
     def _group_serials_by_zone(seats: Iterable[tuple[int, int]]) -> dict[int, list[int]]:
