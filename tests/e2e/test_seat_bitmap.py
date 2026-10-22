@@ -42,6 +42,15 @@ async def warmed_event(container: Container, seeded_event: dict) -> dict:
     }
 
 
+def _positions(seats) -> list[SeatPositionInternal]:
+    return [
+        SeatPositionInternal(
+            event_zone_id=s.event_zone_id, serial_number=s.seat_serial_number
+        )
+        for s in seats
+    ]
+
+
 @pytest.mark.asyncio
 async def test_locking_names_the_seats_it_took(warmed_event, caplog):
     """The line that survives a kill -9 between the lock and the insert."""
@@ -99,6 +108,72 @@ async def test_a_released_seat_can_be_locked_again(warmed_event):
         ],
     )
     await cache.check_and_lock_seats_atomic(pricing)
+
+
+# --------------------------------------------------------------------------- #
+# The pending-release flag
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_a_flagged_release_is_visible_to_the_next_sweep(warmed_event):
+    cache, event_id = warmed_event["cache"], warmed_event["event_id"]
+
+    await cache.mark_release_pending(event_id=event_id, order_id=77)
+
+    assert [(p.event_id, p.order_id) for p in await cache.pending_releases()] == [
+        (event_id, 77)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_nothing_in_flight_means_nothing_to_resume(warmed_event):
+    assert await warmed_event["cache"].pending_releases() == []
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_bits_clears_the_flag(warmed_event):
+    """One call, both effects. A gap between them would let a buyer legitimately
+    take the seat and the next sweep would clear that buyer's hold."""
+    cache, event_id, seats = (
+        warmed_event["cache"], warmed_event["event_id"], warmed_event["seats"]
+    )
+    await cache.check_and_lock_seats_atomic(
+        EventSeatsPricingInternal(event_id=event_id, seats=seats)
+    )
+    await cache.mark_release_pending(event_id=event_id, order_id=77)
+
+    await cache.release_seats(
+        event_id=event_id, seats=_positions(seats), clear_pending=77
+    )
+
+    assert await cache.pending_releases() == []
+    await cache.check_and_lock_seats_atomic(
+        EventSeatsPricingInternal(event_id=event_id, seats=seats)
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unflagged_release_leaves_other_work_alone(warmed_event):
+    """The create-failure path has no order to flag - it must not disturb the
+    sweep's in-flight list on its way out."""
+    cache, event_id, seats = (
+        warmed_event["cache"], warmed_event["event_id"], warmed_event["seats"]
+    )
+    await cache.mark_release_pending(event_id=event_id, order_id=99)
+
+    await cache.release_seats(event_id=event_id, seats=_positions(seats))
+
+    assert [p.order_id for p in await cache.pending_releases()] == [99]
+
+
+@pytest.mark.asyncio
+async def test_the_flag_outlives_a_release_that_never_finished(warmed_event):
+    """Crash after the flag, before the Lua call: the next sweep still finds it."""
+    cache, event_id = warmed_event["cache"], warmed_event["event_id"]
+
+    await cache.mark_release_pending(event_id=event_id, order_id=77)
+    await cache.mark_release_pending(event_id=event_id, order_id=77)
+
+    assert len(await cache.pending_releases()) == 1
 
 
 # --------------------------------------------------------------------------- #

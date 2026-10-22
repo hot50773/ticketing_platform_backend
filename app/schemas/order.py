@@ -154,8 +154,8 @@ class OrderTicketInternal(SQLModel):
     amount: int
 
 
-class UnreleasedSeatInternal(SQLModel):
-    """A seat the database still holds for an order that is already gone.
+class OrderSeatInternal(SQLModel):
+    """One seat an order reserved, flattened for the release worker.
 
     Carries the zone and serial so the worker can clear the Redis bit without
     a second trip, and the event id so it can batch a whole event at once.

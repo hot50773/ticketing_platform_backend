@@ -15,7 +15,7 @@ from sqlmodel import select
 
 from app.containers import Container
 from app.enums import SeatStatus
-from app.exceptions import SeatReleaseError
+from app.exceptions import SeatNotReleasableError
 from app.libs.clock.functional import now_utc
 from app.models import EventSeat, EventZone
 
@@ -110,12 +110,11 @@ async def test_an_already_released_seat_is_not_written_again(
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_soft_deleted_seat_is_rejected(container, seeded_event, seat_ids):
-    """A seat retired out from under an order that still holds it. Idempotence
-    is for repeats, not for data nobody can explain."""
+    """A seat retired out from under an order that still reserves it."""
     await _set(container, seat_ids, status=SeatStatus.RESERVED)
     await _set(container, seat_ids[:1], deleted_at=now_utc())
 
-    with pytest.raises(SeatReleaseError) as exc:
+    with pytest.raises(SeatNotReleasableError) as exc:
         await _release(container, seeded_event["event_id"], seat_ids)
 
     assert str(seat_ids[0]) in str(exc.value)
@@ -125,7 +124,7 @@ async def test_soft_deleted_seat_is_rejected(container, seeded_event, seat_ids):
 async def test_unknown_seat_id_is_rejected(container, seeded_event, seat_ids):
     missing = max(seat_ids) + 1000
 
-    with pytest.raises(SeatReleaseError) as exc:
+    with pytest.raises(SeatNotReleasableError) as exc:
         await _release(container, seeded_event["event_id"], seat_ids + [missing])
 
     assert str(missing) in str(exc.value)
@@ -140,5 +139,35 @@ async def test_a_bad_seat_outranks_an_already_released_one(
     await _set(container, seat_ids, status=SeatStatus.AVAILABLE)
     await _set(container, seat_ids[:1], deleted_at=now_utc())
 
-    with pytest.raises(SeatReleaseError):
+    with pytest.raises(SeatNotReleasableError):
         await _release(container, seeded_event["event_id"], seat_ids)
+
+
+@pytest.mark.asyncio
+async def test_releasing_does_not_queue_behind_a_booking(container, seeded_event):
+    """A booking holding FOR SHARE must not stall the release path."""
+    import asyncio
+
+    from app.models import Event
+
+    booking = container.db().get_async_session()
+    await booking.__aenter__()
+    try:
+        await booking.execute(
+            select(Event)
+            .where(Event.id == seeded_event["event_id"])
+            .with_for_update(read=True)
+        )
+
+        async def release():
+            async with container.event_repository().load_for_seat_release(
+                seeded_event["event_id"]
+            ) as event:
+                await event.check_and_release_seats([])
+
+        # The timeout wraps acquiring the aggregate too: a row lock here would
+        # queue behind the booking and hang rather than fail.
+        await asyncio.wait_for(release(), timeout=3.0)
+    finally:
+        await booking.rollback()
+        await booking.__aexit__(None, None, None)

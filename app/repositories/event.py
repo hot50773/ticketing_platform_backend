@@ -80,6 +80,21 @@ class EventRepository:
                 raise
 
     @asynccontextmanager
+    async def load_for_seat_release(self, event_id: int) -> AsyncIterator[EventAggregate]:
+        """Write access with no row lock - a deliberate exception to the
+        contract above. Releasing is one atomic UPDATE, and taking the lock
+        would block booking exactly when expiries peak alongside sales.
+        """
+        async with self.session_factory() as session:
+            try:
+                event = await self._get_and_check_event(session, event_id)
+                yield EventAggregate(session, event)
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
+
+    @asynccontextmanager
     async def create(self, payload: EventCreate) -> AsyncIterator[EventAggregate]:
         """Creates an unpublished event, clones the venue's layout into it, and
         hands back the aggregate still inside the same transaction.

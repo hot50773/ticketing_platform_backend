@@ -39,6 +39,7 @@ from app.exceptions import (
     SeatOccupiedError,
     EVENT_SEAT_NOT_RELEASABLE_MSG,
     SeatReleaseError,
+    SeatNotReleasableError,
     SeatReserveError,
 )
 from app.libs.clock.functional import now_utc
@@ -426,7 +427,7 @@ class EventAggregate:
             repeated_ids = await self._present_seat_ids(leftover_ids)
             unexplained_ids = sorted(leftover_ids - repeated_ids)
             if unexplained_ids:
-                raise SeatReleaseError(
+                raise SeatNotReleasableError(
                     EVENT_SEAT_NOT_RELEASABLE_MSG.format(event_seat_ids=unexplained_ids)
                 )
             logger.info("Event seats %s were already released", sorted(repeated_ids))

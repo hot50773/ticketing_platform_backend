@@ -101,6 +101,12 @@ class SeatReleaseError(BusinessRuleViolationError):
     """Raised when releasing seats."""
     pass
 
+class SeatNotReleasableError(SeatReleaseError):
+    """Raised when seats cannot be handed back because the rows are gone -
+    retired with their event, or never there. Its own type so the release
+    worker can tell terminal from retryable with `except`."""
+    pass
+
 class SeatReserveError(BusinessRuleViolationError):
     """Raised when reserving seats."""
     pass

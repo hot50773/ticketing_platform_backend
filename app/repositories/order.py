@@ -28,7 +28,7 @@ from app.enums import OrderStatus, PaymentStatus, SeatStatus
 from app.models import Event, EventSeat, Order, OrderTicket
 from app.repositories._pagination import paginate
 from app.schemas import Page, PaginationParams
-from app.schemas.order import OrderCreate, UnreleasedSeatInternal
+from app.schemas.order import OrderCreate, OrderSeatInternal
 
 
 class OrderRepository:
@@ -135,7 +135,7 @@ class OrderRepository:
             )
             return list((await session.execute(stmt)).scalars().all())
 
-    async def get_unreleased_seats(self, limit: int) -> list[UnreleasedSeatInternal]:
+    async def get_unreleased_seats(self, limit: int) -> list[OrderSeatInternal]:
         """Seats still RESERVED for orders that are already soft-deleted.
 
         `limit` caps orders, not rows: half-releasing a multi-seat order would
@@ -162,7 +162,7 @@ class OrderRepository:
                 .order_by(Order.id, EventSeat.id)
             )
             return [
-                UnreleasedSeatInternal(
+                OrderSeatInternal(
                     order_id=order.id,
                     event_id=order.event_id,
                     event_seat_id=seat.id,

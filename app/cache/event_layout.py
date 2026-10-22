@@ -34,7 +34,6 @@ from app.enums import (
     RedisResultStatus,
     RedisSeatExistence,
     RedisSeatLockFailure,
-    RedisSeatSoldStatus,
 )
 from app.exceptions import (
     EVENT_SEAT_OCCUPIED_MSG,
@@ -48,6 +47,7 @@ from app.schemas.event import (
     EventLayoutInternal,
     EventZoneWithSeatInternal,
     EventSeatsPricingInternal,
+    PendingReleaseInternal,
     SeatPositionInternal,
 )
 
@@ -68,15 +68,20 @@ LUA_BASE_DIR = Path(__file__).parent / "lua"
 class EventLayoutCache:
     """Caches seat layouts for event in Redis."""
     LOCK_SEATS_SCRIPT_PATH = LUA_BASE_DIR / "lock_seats.lua"
+    RELEASE_SEATS_SCRIPT_PATH = LUA_BASE_DIR / "release_seats.lua"
 
     SEAT_SOLD_BITMAP_KEY = "seat_sold_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否售出的紀錄表
+    PENDING_RELEASE_KEY = "pending_release"
     SEAT_EXISTENCE_BITMAP_KEY = "seat_existence_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否存在的紀錄表
 
     def __init__(self, redis_client: RedisClient):
         self._redis_client = redis_client
         #  TODO: lua script 的處理拆分成 lua script handler
-        script = load_lua_scripts(self.LOCK_SEATS_SCRIPT_PATH)
-        self._lock_seats_script = self._redis_client.register_script(script)
+        self._lock_seats_script = self._register(self.LOCK_SEATS_SCRIPT_PATH)
+        self._release_seats_script = self._register(self.RELEASE_SEATS_SCRIPT_PATH)
+
+    def _register(self, path: Path):
+        return self._redis_client.register_script(load_lua_scripts(path))
 
     async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
         """Warms every zone's existence bitmap in one round trip."""
@@ -130,11 +135,6 @@ class EventLayoutCache:
     def _mark_seat_existence(bitfield, offset: int):
         """serial_number is the bit offset"""
         return bitfield.set(RedisBitUnit.UINT1, offset, RedisSeatExistence.EXIST.value)
-
-    @staticmethod
-    def _mark_seat_release(bitfield, offset: int):
-        """serial_number is the bit offset"""
-        return bitfield.set(RedisBitUnit.UINT1, offset, RedisSeatSoldStatus.NOT_SOLD.value)
 
     async def check_and_lock_seats_atomic(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
         event_id = event_seats_pricing.event_id
@@ -202,10 +202,17 @@ class EventLayoutCache:
             for seat in event_seats_pricing.seats
         )
 
-    async def release_seats(self, event_id: int, seats: list[SeatPositionInternal]) -> None:
+    async def release_seats(
+        self,
+        event_id: int,
+        seats: list[SeatPositionInternal],
+        clear_pending: int | None = None,
+    ) -> None:
         """Clears the sold bits of seats nobody holds any more.
 
-        Grouping them per zone is this layer's business.
+        `clear_pending` is the order the worker flagged before it started.
+        It goes in the same Lua call as the bits so the flag can never
+        outlive them. The create-failure path has no order to name.
         """
         if not seats:
             return
@@ -215,27 +222,36 @@ class EventLayoutCache:
         )
 
         try:
-            async with self._redis_client.pipeline() as pipeline:
-                for zone_id, seat_serials in zone_id_to_seat_serials_map.items():
-                    self.mark_seats_release_for_zone(
-                        pipeline=pipeline,
-                        event_id=event_id,
-                        zone_id=zone_id,
-                        seat_serials=seat_serials,
-                    )
-                await pipeline.execute()
+            await self._release_seats_script(
+                keys=[],
+                args=[
+                    event_id,
+                    json.dumps(zone_id_to_seat_serials_map),
+                    "" if clear_pending is None else clear_pending,
+                ],
+            )
             logger.info(SEATS_UNLOCKED_MSG, event_id, zone_id_to_seat_serials_map)
         except RedisError as e:
             logger.exception("Failed to release seats for event %s, zone:seat_serials - %s", event_id, zone_id_to_seat_serials_map)
             raise e
 
-    def mark_seats_release_for_zone(
-        self, pipeline, event_id: int, zone_id: int, seat_serials: list[int]
-    ) -> None:
-        """Buffers one BITFIELD clearing the zone's sold bits. Does no I/O."""
-        key = self.SEAT_SOLD_BITMAP_KEY.format(event_id=event_id, zone_id=zone_id)
-        bitfield = pipeline.bitfield(key)
+    async def mark_release_pending(self, event_id: int, order_id: int) -> None:
+        """Flags a release as started, before anything is actually released.
 
-        for serial_number in seat_serials:
-            self._mark_seat_release(bitfield=bitfield, offset=serial_number)
-        bitfield.execute()
+        Written first so it outlives a crash: by the time the seats are back in
+        Postgres there is no row left that would point at the unfinished work.
+        """
+        await self._redis_client.sadd(
+            self.PENDING_RELEASE_KEY, f"{event_id}:{order_id}"
+        )
+
+    async def pending_releases(self) -> list[PendingReleaseInternal]:
+        members = await self._redis_client.smembers(self.PENDING_RELEASE_KEY)
+        pending = []
+        for member in members:
+            event_id, _, order_id = member.partition(":")
+            pending.append(
+                PendingReleaseInternal(event_id=int(event_id), order_id=int(order_id))
+            )
+        return pending
+
