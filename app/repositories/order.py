@@ -140,6 +140,9 @@ class OrderRepository:
 
         `limit` caps orders, not rows: half-releasing a multi-seat order would
         leave the rest held with nothing left pointing at them.
+
+        Retired seats are excluded: nothing can hand them back, so leaving them
+        in would make every sweep pick them up and fail on them again.
         """
         async with self.session_factory() as session:
             candidates = (
@@ -147,6 +150,7 @@ class OrderRepository:
                 .join(OrderTicket, OrderTicket.order_id == Order.id)
                 .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
                 .where(Order.deleted_at != None)
+                .where(EventSeat.deleted_at == None)
                 .where(EventSeat.status == SeatStatus.RESERVED)
                 .distinct()
                 .order_by(Order.id)
@@ -158,7 +162,37 @@ class OrderRepository:
                 .join(OrderTicket, OrderTicket.order_id == Order.id)
                 .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
                 .where(Order.id.in_(select(candidates.c.id)))
+                .where(EventSeat.deleted_at == None)
                 .where(EventSeat.status == SeatStatus.RESERVED)
+                .order_by(Order.id, EventSeat.id)
+            )
+            return [
+                OrderSeatInternal(
+                    order_id=order.id,
+                    event_id=order.event_id,
+                    event_seat_id=seat.id,
+                    event_zone_id=seat.event_zone_id,
+                    serial_number=seat.serial_number,
+                )
+                for order, seat in (await session.execute(stmt)).all()
+            ]
+
+    async def get_seats_for_orders(self, order_ids: list[int]) -> list[OrderSeatInternal]:
+        """Every seat the given orders reserved, whatever state it is in now.
+
+        Deliberately unfiltered: this resumes a release that may already have
+        handed the seats back in Postgres, which is exactly what makes them
+        invisible to get_unreleased_seats.
+        """
+        if not order_ids:
+            return []
+
+        async with self.session_factory() as session:
+            stmt = (
+                select(Order, EventSeat)
+                .join(OrderTicket, OrderTicket.order_id == Order.id)
+                .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
+                .where(Order.id.in_(order_ids))
                 .order_by(Order.id, EventSeat.id)
             )
             return [

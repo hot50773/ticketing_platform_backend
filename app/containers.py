@@ -13,6 +13,7 @@ from app.services.calculators.order import OrderCalculator
 from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
 from app.services.order import OrderService, UnimplementedPaymentGateway
+from app.services.seat_release import SeatReleaseService
 from app.services.mappers import EventSchemaMapper
 from app.services.mappers.order import OrderSchemaMapper
 from app.services.validators import EventRuleValidator
@@ -115,4 +116,12 @@ class Container(containers.DeclarativeContainer):
         order_schema_mapper=order_schema_mapper,
         payment_gateway=payment_gateway,
         event_layout_cache=event_layout_cache,
+    )
+
+    seat_release_service = providers.Factory(
+        SeatReleaseService,
+        order_repository=order_repository,
+        event_repository=event_repository,
+        event_layout_cache=event_layout_cache,
+        order_validator=order_validator,
     )

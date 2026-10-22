@@ -214,7 +214,7 @@ class EventLayoutCache:
         It goes in the same Lua call as the bits so the flag can never
         outlive them. The create-failure path has no order to name.
         """
-        if not seats:
+        if not seats and clear_pending is None:
             return
 
         zone_id_to_seat_serials_map = self._group_serials_by_zone(

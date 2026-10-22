@@ -8,6 +8,7 @@ must.
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import update
 from sqlmodel import select
 
 from app.containers import Container
@@ -185,3 +186,51 @@ async def test_the_cap_counts_orders_not_rows(container, make_order):
 
     assert len({seat.order_id for seat in found}) == 1
     assert len(found) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Resuming a release that was flagged but not finished
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_seats_come_back_even_once_the_database_let_them_go(container, make_order):
+    """A release that got as far as step 2 leaves nothing for the query above
+    to find, so resuming it has to ask by order id instead."""
+    order_id = await make_order(seats=2, deleted=True, seat_status=SeatStatus.AVAILABLE)
+
+    found = await container.order_repository().get_seats_for_orders([order_id])
+
+    assert len(found) == 2
+    assert {seat.serial_number for seat in found} == {0, 1}
+
+
+@pytest.mark.asyncio
+async def test_an_order_that_never_committed_has_no_seats(container):
+    """Its flag still has to be cleared, so the caller gets an empty list
+    rather than an error."""
+    assert await container.order_repository().get_seats_for_orders([4242]) == []
+
+
+@pytest.mark.asyncio
+async def test_asking_for_nothing_touches_nothing(container):
+    assert await container.order_repository().get_seats_for_orders([]) == []
+
+
+@pytest.mark.asyncio
+async def test_a_seat_retired_with_its_event_stops_being_a_candidate(
+    container, make_order
+):
+    """Nothing can hand these back, so leaving them in the candidate list would
+    make the sweep pick them up and fail on them for ever."""
+    order_id = await make_order(deleted=True, seat_status=SeatStatus.RESERVED)
+    async with container.db().get_async_session() as session:
+        tickets = (await session.execute(
+            select(OrderTicket).where(OrderTicket.order_id == order_id)
+        )).scalars().all()
+        await session.execute(
+            update(EventSeat)
+            .where(EventSeat.id.in_([ticket.event_seat_id for ticket in tickets]))
+            .values(deleted_at=now_utc())
+        )
+        await session.commit()
+
+    assert await container.order_repository().get_unreleased_seats(limit=10) == []
