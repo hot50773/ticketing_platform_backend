@@ -121,10 +121,10 @@ class OrderValidator:
                 f"Order {state.id} is paid for; refund it instead of cancelling"
             )
 
-    def validate_deletable(self, state: OrderStateInternal) -> None:
+    def check_deletable(self, state: OrderStateInternal) -> bool:
         """Soft-deleting releases the seats, so a settled purchase must not go
         this way. Cancelled and unpaid orders are both fine to release."""
-        if state.payment_status == PaymentStatus.SUCCESS:
-            raise OrderNotDeletableError(
-                f"Order {state.id} is paid for; refund it before releasing its seats"
-            )
+        now = self._now()
+        is_expired = state.payment_deadline is not None and state.payment_deadline < now
+        is_pending = (state.status == OrderStatus.PENDING and state.payment_status == PaymentStatus.PENDING)
+        return is_pending and is_expired

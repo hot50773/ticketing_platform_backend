@@ -9,6 +9,9 @@ Two phases, one path. Phase 1 soft-deletes orders whose hold ran out; Phase 2
 hands back the seats of every order that is already gone, whoever deleted it.
 A user deleting an order does not release its seats itself - it only soft
 -deletes, and Phase 2 finds it like any other.
+
+TODO:
+ 需要釋放的訂單狀態：CANCELED / PENDING && now > payment_deadline && order deleted
 """
 import logging
 from collections import defaultdict
@@ -16,6 +19,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from app.cache.event_layout import EventLayoutCache
+from app.cache.job_lock import JobLock
 from app.exceptions import SeatNotReleasableError
 from app.libs.clock.functional import now_utc
 from app.repositories.event import EventRepository
@@ -39,6 +43,7 @@ class SeatReleaseService:
         event_repository: EventRepository,
         event_layout_cache: EventLayoutCache,
         order_validator: OrderValidator,
+        job_lock: JobLock,
         batch_size: int = DEFAULT_BATCH_SIZE,
         clock: Callable[[], datetime] = now_utc,
     ):
@@ -46,32 +51,41 @@ class SeatReleaseService:
         self._events = event_repository
         self._cache = event_layout_cache
         self._validator = order_validator
+        self._lock = job_lock
         self._batch_size = batch_size
         self._now = clock
 
     async def run(self) -> None:
-        expired = await self.expire_overdue_orders()
-        released = await self.release_unclaimed_seats()
-        if expired or released:
-            logger.info("Sweep expired %s orders and released %s", expired, released)
+        """One sweep, if nobody else already holds the lock: two runners on the
+        same batch could clear a seat a customer has meanwhile legitimately taken.
+        """
+        async with self._lock.held() as executable:
+            if not executable:
+                logger.info("Another sweep holds the lock; skipping this round")
+                return
+
+            expired = await self.expire_overdue_orders()
+            released = await self.release_unclaimed_seats()
+            if expired or released:
+                logger.info("Sweep expired %s orders and released %s", expired, released)
 
     # ----------------------------------------------------------------------- #
     # Phase 1
     # ----------------------------------------------------------------------- #
-    async def expire_overdue_orders(self) -> int:
+    async def process_expired_order(self) -> int:
         """Soft-deletes orders whose hold has run out. Seats are Phase 2's job.
 
         Re-validates under the row lock: the query ran without one, so the
         customer may have paid in the meantime.
         """
         order_ids = await self._orders.get_expired_order_ids(
-            self._now(), self._batch_size
+            now=self._now(), limit=self._batch_size
         )
         expired = 0
         for order_id in order_ids:
             try:
                 async with self._orders.load_for_update(order_id) as order:
-                    self._validator.validate_deletable(order.state)
+                    self._validator.check_deletable(order.state)
                     await order.soft_delete_cascade(OrderDelete(reason=EXPIRED_REASON))
                 expired += 1
             except Exception:

@@ -12,8 +12,11 @@ any single aggregate instance.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Any, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm.sync import update
+from sqlalchemy.sql.operators import and_
 from sqlmodel import select
 
 from app.aggregates.event import EventAggregate
@@ -42,13 +45,6 @@ class OrderRepository:
     # ----------------------------------------------------------------------- #
     @asynccontextmanager
     async def load(self, order_id: int) -> AsyncIterator[OrderAggregate]:
-        """Read-only access. Takes no row lock.
-
-        The rollback is belt-and-braces on a read path - there should be
-        nothing pending to undo. It is here so all three entry points unwind
-        the same way, and so a write accidentally issued through `load()` is
-        discarded loudly rather than left to the pool.
-        """
         async with self.session_factory() as session:
             try:
                 yield OrderAggregate(session, await self._get_and_check_order(session, order_id))
@@ -101,81 +97,85 @@ class OrderRepository:
     # Collection queries
     # ----------------------------------------------------------------------- #
     async def get_orders(self, pagination: PaginationParams) -> Page[Order]:
-        """One page of non-deleted orders ordered by id, plus the total count.
-
-        No ticket loading: the list response carries order headers only, and a
-        page of 50 orders would otherwise drag every seat behind them.
-        """
         async with self.session_factory() as session:
             stmt = select(Order).where(Order.deleted_at == None).order_by(Order.id)
             return await paginate(session, stmt, pagination, Order)
 
-    async def get_expired_order_ids(self, deadline: datetime, limit: int) -> list[int]:
-        """Orders whose hold has run out and that nobody has released yet.
-
-        IN_PROGRESS is excluded deliberately: a charge may be sitting at the
-        provider, and taking those seats away would sell a ticket somebody is
-        in the middle of paying for.
-
-        Oldest first, so a capped sweep cannot starve the longest waiters.
-        """
+    async def get_expired_order_ids(self, now: datetime, limit: int) -> list[int]:
         async with self.session_factory() as session:
+            expired_criteria = and_(
+                Order.deleted_at == None,
+                Order.status == OrderStatus.PENDING,
+                Order.payment_status.in_([PaymentStatus.PENDING, PaymentStatus.FAILED]),
+                Order.payment_deadline <= now,
+            )
             stmt = (
                 select(Order.id)
-                .where(Order.deleted_at == None)
-                .where(Order.status == OrderStatus.PENDING)
-                .where(
-                    Order.payment_status.in_(
-                        [PaymentStatus.PENDING, PaymentStatus.FAILED]
-                    )
-                )
-                .where(Order.payment_deadline <= deadline)
+                .where(expired_criteria)
                 .order_by(Order.payment_deadline)
                 .limit(limit)
             )
             return list((await session.execute(stmt)).scalars().all())
 
-    async def get_unreleased_seats(self, limit: int) -> list[OrderSeatInternal]:
-        """Seats still RESERVED for orders that are already soft-deleted.
-
-        `limit` caps orders, not rows: half-releasing a multi-seat order would
-        leave the rest held with nothing left pointing at them.
-
-        Retired seats are excluded: nothing can hand them back, so leaving them
-        in would make every sweep pick them up and fail on them again.
-        """
+    async def process_expired_order(self, now: datetime) -> list[int]:
         async with self.session_factory() as session:
-            candidates = (
-                select(Order.id)
-                .join(OrderTicket, OrderTicket.order_id == Order.id)
-                .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
-                .where(Order.deleted_at != None)
-                .where(EventSeat.deleted_at == None)
-                .where(EventSeat.status == SeatStatus.RESERVED)
-                .distinct()
-                .order_by(Order.id)
-                .limit(limit)
-                .subquery()
+            expired__order_criteria = and_(
+                Order.deleted_at == None,
+                Order.status == OrderStatus.PENDING,
+                Order.payment_status == PaymentStatus.PENDING,
+                Order.payment_deadline <= now,
             )
             stmt = (
-                select(Order, EventSeat)
-                .join(OrderTicket, OrderTicket.order_id == Order.id)
-                .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
-                .where(Order.id.in_(select(candidates.c.id)))
-                .where(EventSeat.deleted_at == None)
-                .where(EventSeat.status == SeatStatus.RESERVED)
-                .order_by(Order.id, EventSeat.id)
+                update(Order)
+                .where(expired__order_criteria)
+                .values(deleted_at=now)
+                .returning(Order.id)
             )
-            return [
-                OrderSeatInternal(
-                    order_id=order.id,
-                    event_id=order.event_id,
-                    event_seat_id=seat.id,
-                    event_zone_id=seat.event_zone_id,
-                    serial_number=seat.serial_number,
-                )
-                for order, seat in (await session.execute(stmt)).all()
-            ]
+            result = session.execute(stmt)
+
+            return list((await result).scalars().all())
+
+    # async def get_unreleased_seats(self, limit: int) -> list[OrderSeatInternal]:
+    #     """Seats still RESERVED for orders that are already soft-deleted.
+    #
+    #     `limit` caps orders, not rows: half-releasing a multi-seat order would
+    #     leave the rest held with nothing left pointing at them.
+    #
+    #     Retired seats are excluded: nothing can hand them back, so leaving them
+    #     in would make every sweep pick them up and fail on them again.
+    #     """
+    #     async with self.session_factory() as session:
+    #         candidates = (
+    #             select(Order.id)
+    #             .join(OrderTicket, OrderTicket.order_id == Order.id)
+    #             .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
+    #             .where(Order.deleted_at != None)
+    #             .where(EventSeat.deleted_at == None)
+    #             .where(EventSeat.status == SeatStatus.RESERVED)
+    #             .distinct()
+    #             .order_by(Order.id)
+    #             .limit(limit)
+    #             .subquery()
+    #         )
+    #         stmt = (
+    #             select(Order, EventSeat)
+    #             .join(OrderTicket, OrderTicket.order_id == Order.id)
+    #             .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
+    #             .where(Order.id.in_(select(candidates.c.id)))
+    #             .where(EventSeat.deleted_at == None)
+    #             .where(EventSeat.status == SeatStatus.RESERVED)
+    #             .order_by(Order.id, EventSeat.id)
+    #         )
+    #         return [
+    #             OrderSeatInternal(
+    #                 order_id=order.id,
+    #                 event_id=order.event_id,
+    #                 event_seat_id=seat.id,
+    #                 event_zone_id=seat.event_zone_id,
+    #                 serial_number=seat.serial_number,
+    #             )
+    #             for order, seat in (await session.execute(stmt)).all()
+    #         ]
 
     async def get_seats_for_orders(self, order_ids: list[int]) -> list[OrderSeatInternal]:
         """Every seat the given orders reserved, whatever state it is in now.

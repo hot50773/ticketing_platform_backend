@@ -1,10 +1,5 @@
 """Order lifecycle use cases: create, read, pay, cancel, release.
 
-Every use case enters the repository exactly once per transaction, through an
-aggregate that owns it. Reading state and writing the decision that depends on
-it therefore happen together; see app/aggregates/order.py for why the write
-paths also take a row lock.
-
 Boundaries:
   - persistence goes through the aggregate, never a session
   - domain rules go through OrderValidator, which stays I/O free
@@ -12,11 +7,9 @@ Boundaries:
   - ORM -> schema translation goes through OrderSchemaMapper
   - the payment provider sits behind PaymentGateway, so nothing here knows
     whether a charge is a network call, a mock, or a queue
-
-execute_payment is the one use case that deliberately spans more than one
-transaction - see its docstring.
 """
 import logging
+from datetime import datetime
 from typing import Protocol
 
 from redis import RedisError
@@ -24,6 +17,7 @@ from redis import RedisError
 
 from app.cache.event_layout import EventLayoutCache
 from app.models import Order
+from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
 from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal
@@ -69,14 +63,15 @@ class PaymentGateway(Protocol):
         """
         ...
 
+class OrderScheduler:
+    """Runs check_order_expiration for an order once its deadline passes."""
+
+    @staticmethod
+    async def schedule_order_expiration_task(order_id: int, deadline: datetime) -> None:
+        await OrderExpirationQueue.schedule(order_id=order_id, schedule_time=deadline)
+
 
 class UnimplementedPaymentGateway:
-    """Placeholder binding so the container resolves before a provider exists.
-
-    Deliberately raises rather than returning a fake success: a silent no-op
-    here would let an order reach CONFIRMED with no money behind it.
-    """
-
     async def charge(self, order_id: int, amount: int, payload: OrderPay) -> str:
         raise NotImplementedError(
             "No payment provider is wired in. Bind a real PaymentGateway in "
@@ -96,6 +91,7 @@ class OrderService:
         order_schema_mapper: OrderSchemaMapper,
         payment_gateway: PaymentGateway,
         event_layout_cache: EventLayoutCache,
+        order_expiration_scheduler: OrderExpirationQueue,
     ):
         self._repository = order_repository
         self._event_repository = event_repository
@@ -104,40 +100,35 @@ class OrderService:
         self._validator = order_validator
         self._calculator = order_calculator
         self._mapper = order_schema_mapper
+        self._order_expiration_scheduler = order_expiration_scheduler
 
     async def create_order(self, payload: OrderCreate) -> OrderDetailResponse:
-        """flow: assert the event is orderable -> resolve and assert the seats
-        -> price them -> insert. Always PENDING / PENDING.
-
-        One transaction holding `FOR SHARE` on the event, so it cannot be
-        unpublished or repriced between the rules and the insert. Prices and
-        the deadline come from the backend; the request only picks seats.
-        """
-        held_seats = None
+        locked_seats = None
         try:
             async with self._repository.load_for_create(payload) as order_aggr_factory:
-                # The event rule is a field read and the seat resolution is a
-                # query, so a closed event must be rejected before paying for it.
                 self._validator.validate_event_orderable(order_aggr_factory.event_state)
+                seats_data = await order_aggr_factory.seats_pricing()
+                self._validator.validate_seats_input(payload, seats_data)
+                input_data = self._calculator.calculate_order_price(payload, seats_data)
 
-                seats_pricing_data = await order_aggr_factory.seats_pricing()
-                self._validator.validate_seats_input(payload, seats_pricing_data)
+                await self._cache.check_and_lock_seats_atomic(seats_data)
+                locked_seats = seats_data
+                order_aggr = await order_aggr_factory.create(input_data)
+                order_data = order_aggr.with_tickets()
+        except BaseException as e:
+            if locked_seats is not None:
+                await self._undo_seat_lock(locked_seats)
+            raise e
 
-                await self._cache.check_and_lock_seats_atomic(seats_pricing_data)
-                held_seats = seats_pricing_data
+        if order_data.order.payment_deadline is not None:
+            await self._order_expiration_scheduler.schedule(
+                order_data.order.id, order_data.order.payment_deadline
+            )
+        return self._mapper.to_order_detail(order_data)
 
-                priced_order = self._calculator.calculate_order_price(payload, seats_pricing_data)
-                order_aggr = await order_aggr_factory.create(priced_order)
-                return self._mapper.to_order_detail(order_aggr.with_tickets())
-        except BaseException:
-            # Outside the `async with` on purpose: a failing commit is the one
-            # way to hold seats for an order that does not exist. `None` means
-            # the hold is somebody else's - we lost the race and took nothing.
-            if held_seats is not None:
-                await self._undo_seat_lock(held_seats)
-            raise
-
-    async def _undo_seat_lock(self, event_seats_pricing: EventSeatsPricingInternal) -> None:
+    async def _undo_seat_lock(
+        self, event_seats_pricing: EventSeatsPricingInternal
+    ) -> None:
         """Unlocks seats whose order was never created.
 
         A Redis outage is logged and swallowed - it must not replace the error
@@ -168,28 +159,31 @@ class OrderService:
         async with self._repository.load(order_id) as order_aggr:
             return self._mapper.to_order_detail(order_aggr.with_tickets())
 
-    async def cancel_order(self, order_id: int) -> OrderResponse:
-        """flow: assert cancellable -> mark CANCELLED.
+    # async def cancel_order(self, order_id: int) -> OrderResponse:
+    #     """flow: assert cancellable -> mark CANCELLED.
+    #
+    #     The row survives. A cancelled order still counts against unpublishing
+    #     the event; only a released (soft-deleted) one stops counting.
+    #     """
+    #     async with self._repository.load_for_update(order_id) as order_aggr:
+    #         self._validator.validate_cancellable(order_aggr.state)
+    #         await order_aggr.cancel_order()
+    #         return self._mapper.to_order(order_aggr.order)
 
-        The row survives. A cancelled order still counts against unpublishing
-        the event; only a released (soft-deleted) one stops counting.
-        """
+    async def check_order_expiration(self, order_id: int) -> None:
         async with self._repository.load_for_update(order_id) as order_aggr:
-            self._validator.validate_cancellable(order_aggr.state)
-            await order_aggr.cancel_order()
-            return self._mapper.to_order(order_aggr.order)
+            should_run = self._validator.check_deletable(order_aggr.state)
+            if should_run:
+                await order_aggr.soft_delete_cascade(OrderDelete(reason="RESERVATION EXPIRED WITHOUT PAYMENT"))
+
+        if should_run:
+            await self.release_seats_by_order(order_aggr.with_tickets())
 
     async def delete_order(self, order_id: int, payload: OrderDelete) -> None:
-        """flow: assert deletable -> soft-delete order + tickets.
-
-        This is what releases the seats: the partial unique index on
-        (order_id, event_seat_id) ignores soft-deleted rows, so the seats
-        become buyable again.
-        """
-        order_data = await self._check_and_delete_order(order_id, payload)
-
+        order_data = await self._delete_order(
+            order_id, payload
+        )
         await self.release_seats_by_order(order_data)
-        # TODO: 要有排程定期清票，讓 Redis 沒有正確釋放的票被處理
 
     async def release_seats_by_order(self, order_data: OrderWithTicketsInternal):
         event_id = order_data.order.event_id
@@ -209,9 +203,10 @@ class OrderService:
             ],
         )
 
-    async def _check_and_delete_order(self, order_id: int, payload: OrderDelete) -> OrderWithTicketsInternal:
+    async def _delete_order(self, order_id: int, payload: OrderDelete) -> OrderWithTicketsInternal:
         async with self._repository.load_for_update(order_id) as order_aggr:
-            self._validator.validate_deletable(order_aggr.state)
+            if not self._validator.check_deletable(order_aggr.state):
+                raise Exception(f"Order {order_id} cannot be deleted")
             await order_aggr.soft_delete_cascade(payload)
             return order_aggr.with_tickets()
 
@@ -233,7 +228,3 @@ class OrderService:
         async with self._repository.load_for_update(order_id) as order_aggr:
             await order_aggr.mark_as_paid()
             return self._mapper.to_order(order_aggr.order)
-
-
-# TODO
-#   - 付款成功後把 EventSeat.status 推到 RESERVED，並更新 redis 的 sold bitmap

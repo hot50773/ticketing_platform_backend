@@ -26,6 +26,8 @@ TICKET_DETAIL_LOADER below loaded it. Deliberate: a lazy load here fires from
 outside the greenlet owning the connection and surfaces as MissingGreenlet
 somewhere unrelated.
 """
+from datetime import datetime
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -185,17 +187,27 @@ class OrderAggregate:
         carries real weight.
         """
         now = now_utc()
-        for ticket in self._order.tickets:
-            # Always true while the loader filters on deleted_at. Kept anyway:
-            # the rule it guards - never overwrite an earlier release timestamp
-            # - must not rest on which loader the caller happened to use.
+        order = self._order
+        await self._delete_tickets(now=now, tickets=order.tickets)
+        await self._delete_order(now=now, order=order, payload=payload)
+        await self._apply(order)
+
+    @staticmethod
+    async def _delete_order(now: datetime, order: Order, payload: OrderDelete):
+        order.comment = payload.reason
+        order.deleted_at = now
+
+    @staticmethod
+    async def _delete_tickets(now: datetime, tickets: list[OrderTicket]):
+        for ticket in tickets:
             if ticket.deleted_at is None:
                 ticket.deleted_at = now
-                self._session.add(ticket)
 
-        self._order.comment = payload.reason
-        self._order.deleted_at = now
-        await self._apply(self._order)
+    @staticmethod
+    async def _add_ticket_release_job(now: datetime, tickets: list[OrderTicket]):
+        for ticket in tickets:
+            if ticket.deleted_at is None:
+                ticket.deleted_at = now
 
     # ----------------------------------------------------------------------- #
     # Internals
@@ -206,3 +218,6 @@ class OrderAggregate:
         await self._session.flush()
         await self._session.refresh(instance)
 
+    async def _add_release_ticket_jobs(self, tickets: list[OrderTicket]) -> None:
+        # TODO: 排程釋放這些票在 Redis 的鎖位
+        ...

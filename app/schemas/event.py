@@ -11,12 +11,13 @@ endpoint instead.
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import AfterValidator
+from pydantic import AfterValidator, ConfigDict
 from sqlmodel import SQLModel, Field
 
 from app.enums import SeatStatus
 from app.models import Event, EventZone
 from ._shared import UtcDatetime, _TableMetaMixin
+
 
 # EventZone.price is nullable: NULL means "not configured yet", which blocks
 # publishing. 0 is therefore a valid price (a genuinely free zone).
@@ -97,6 +98,39 @@ class EventZoneCreate(SQLModel):
     name: str = Field(max_length=100)
     price: int | None = Field(default=None, ge=0, description="None = 尚未設定票價")
     seats: SeatLayout = Field(default_factory=list)
+    model_config = ConfigDict(json_schema_extra={
+  "name": "A區",
+  "price": 100,
+  "seats": [
+    {
+      "row": 1,
+      "col": 1
+    },
+   {
+      "row": 1,
+      "col": 2
+    },
+{
+      "row": 1,
+      "col": 3
+    },
+{
+      "row": 1,
+      "col": 4
+    },
+{
+      "row": 1,
+      "col": 5
+    },
+{
+      "row": 1,
+      "col": 6
+    },
+{
+      "row": 1,
+      "col": 7
+    }
+  ]})
 
 
 class EventZoneProfileUpdate(SQLModel):

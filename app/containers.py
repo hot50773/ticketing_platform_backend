@@ -4,18 +4,23 @@ import pkgutil
 from dependency_injector import containers, providers
 
 from app.cache.event_layout import EventLayoutCache
+from app.cache.job_lock import JobLock
 from app.db.postgres import Database
 from app.db.redis import RedisClient
+from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
+from app.repositories.user import UserRepository
 from app.repositories.venue import VenueRepository
 from app.services.calculators.order import OrderCalculator
 from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
+from app.services.mappers.user import UserSchemaMapper
 from app.services.order import OrderService, UnimplementedPaymentGateway
 from app.services.seat_release import SeatReleaseService
 from app.services.mappers import EventSchemaMapper
 from app.services.mappers.order import OrderSchemaMapper
+from app.services.user import UserService
 from app.services.validators import EventRuleValidator
 from app.services.validators.order import OrderValidator
 from app.services.venue import VenueService
@@ -52,6 +57,11 @@ class Container(containers.DeclarativeContainer):
     redis_client = providers.Singleton(RedisClient)
 
     # Repositories
+    user_repository = providers.Factory(
+        UserRepository,
+        session_factory=async_session_factory
+    )
+
     event_repository = providers.Factory(
         EventRepository,
         session_factory=async_session_factory
@@ -78,10 +88,16 @@ class Container(containers.DeclarativeContainer):
     order_calculator = providers.Factory(OrderCalculator)
 
     # ORM -> schema translation, kept out of the services
+    user_schema_mapper = providers.Factory(UserSchemaMapper)
     event_schema_mapper = providers.Factory(EventSchemaMapper)
     order_schema_mapper = providers.Factory(OrderSchemaMapper)
 
     # Services
+    user_service = providers.Factory(
+        UserService,
+        user_repository=user_repository,
+        user_schema_mapper=user_schema_mapper
+    )
     venue_service = providers.Factory(
         VenueService,
         venue_repository=venue_repository
@@ -107,6 +123,8 @@ class Container(containers.DeclarativeContainer):
     # the real gateway when POST /orders/{order_id}/pay goes live.
     payment_gateway = providers.Factory(UnimplementedPaymentGateway)
 
+    order_expiration_queue = providers.Factory(OrderExpirationQueue)
+
     order_service = providers.Factory(
         OrderService,
         order_repository=order_repository,
@@ -116,6 +134,11 @@ class Container(containers.DeclarativeContainer):
         order_schema_mapper=order_schema_mapper,
         payment_gateway=payment_gateway,
         event_layout_cache=event_layout_cache,
+        order_expiration_scheduler=order_expiration_queue,
+    )
+
+    seat_release_lock = providers.Factory(
+        JobLock, redis_client=redis_client, name="seat_release"
     )
 
     seat_release_service = providers.Factory(
@@ -124,4 +147,5 @@ class Container(containers.DeclarativeContainer):
         event_repository=event_repository,
         event_layout_cache=event_layout_cache,
         order_validator=order_validator,
+        job_lock=seat_release_lock,
     )

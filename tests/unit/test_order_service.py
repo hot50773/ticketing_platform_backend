@@ -27,6 +27,7 @@ from redis import RedisError
 from tests.unit._fakes import (
     FakeEventLayoutCache,
     FakeEventRepository,
+    FakeOrderExpirationScheduler,
     FakeOrderRepository,
     a_seat_price,
 )
@@ -43,6 +44,7 @@ def a_service(repository: FakeOrderRepository) -> OrderService:
         order_schema_mapper=OrderSchemaMapper(),
         payment_gateway=UnimplementedPaymentGateway(),
         event_layout_cache=FakeEventLayoutCache(repository.calls),
+        order_expiration_scheduler=FakeOrderExpirationScheduler(),
     )
 
 
@@ -150,6 +152,7 @@ def a_service_with_cache(
         order_schema_mapper=OrderSchemaMapper(),
         payment_gateway=UnimplementedPaymentGateway(),
         event_layout_cache=cache,
+        order_expiration_scheduler=FakeOrderExpirationScheduler(),
     )
 
 

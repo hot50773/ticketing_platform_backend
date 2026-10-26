@@ -1,7 +1,7 @@
 [project]
 name = "ticketing_platform"
 version = "0.1.0"
-description = "Add your description here"
+description = "演唱會線上售票後端 API：座位暫時鎖定與逾期自動釋放"
 readme = "README.md"
 requires-python = ">=3.14.0"
 dependencies = [
@@ -12,11 +12,13 @@ dependencies = [
     "greenlet>=3.5.3",
     "pydantic-settings>=2.14.2",
     "pydantic>=2.13.4",
-    "redis>=7.4.1,<8.0.0",
+    "redis>=8.0.0,<9.0.0",
     "sqlmodel>=0.0.39",
     "uvicorn>=0.49.0",
     "apscheduler>=3.11.3",
     "black>=26.5.1",
+    "taskiq[reload]>=0.13.0",
+    "taskiq-redis>=1.2.4",
 ]
 
 
@@ -108,19 +110,6 @@ prepend_sys_path = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["."]
-
-
-[tool.pdm]
-distribution = false
-
-[tool.pdm.scripts]
-_.env_file = ".env"
-start = "uvicorn main:app --reload"
-test = "python -m pytest"
-upgrade_head = "alembic upgrade head"
-upgrade_db = "alembic upgrade +1"
-downgrade_db = "alembic downgrade -1"
-autogenerate_revision = "alembic revision --autogenerate -m"
 
 [dependency-groups]
 dev = [

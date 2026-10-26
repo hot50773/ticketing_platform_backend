@@ -76,7 +76,8 @@ class EventRuleValidator:
                 f"{occupied_seat_count} seat(s) in this zone are locked or reserved"
             )
 
-    def validate_no_active_order(self, order_stats: EventOrderStatsInternal) -> None:
+    @staticmethod
+    def validate_no_active_order(order_stats: EventOrderStatsInternal) -> None:
         """Guards unpublishing and deleting: neither is allowed while orders exist."""
         if order_stats.active_order_count > 0:
             raise ActiveOrdersExistError(

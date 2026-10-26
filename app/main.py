@@ -14,15 +14,14 @@ from app.exceptions import (
 from app.routers.event import router as events_router
 from app.routers.order import router as orders_router
 from app.routers.venue import router as venue_router
+from app.routers.user import router as user_router
 from app.jobs.scheduler import start_scheduler
+from app.workers import broker, schedule_source
 
 logger = logging.getLogger(__name__)
 
 # Instantiate container and wire it at module level so injection decorators resolve correctly
 container = Container()
-container.wire(
-    modules=["app.routers.event", "app.routers.order", "app.routers.venue", "app.main"]
-)
 
 IS_TESTING = "pytest" in sys.modules
 
@@ -39,11 +38,19 @@ async def lifespan(_app: FastAPI):
     # Start background tasks
     scheduler = start_scheduler(container)
 
+    # The API only enqueues; `taskiq worker` / `taskiq scheduler` consume.
+    await broker.startup()
+    await schedule_source.startup()
+
     yield  # Runs the application
 
     print("Cancelling background tasks...")
     if scheduler:
         scheduler.shutdown()
+
+    print("Closing taskiq broker...")
+    await schedule_source.shutdown()
+    await broker.shutdown()
 
     print("Closing PostgreSQL engine and sessions...")
     await db.close_all_sessions()
@@ -82,6 +89,7 @@ async def _handle_rule_violation(_request: Request, exc: BusinessRuleViolationEr
 
 
 # 4. Register Routers
+app.include_router(user_router, prefix="/api/v1")
 app.include_router(events_router, prefix="/api/v1")
 app.include_router(orders_router, prefix="/api/v1")
 app.include_router(venue_router, prefix="/api/v1")

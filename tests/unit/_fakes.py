@@ -373,6 +373,16 @@ class FakeOrderAggregateFactory:
         return FakeOrderAggregate(self.calls, pricing)
 
 
+class FakeOrderExpirationScheduler:
+    """Records the deadlines handed to the delayed queue instead of enqueuing."""
+
+    def __init__(self):
+        self.scheduled: list[tuple[int, datetime]] = []
+
+    async def schedule(self, order_id: int, deadline: datetime) -> None:
+        self.scheduled.append((order_id, deadline))
+
+
 class FakeOrderRepository:
     """Hands out a FakeOrderAggregateFactory through the same context-manager API."""
 
