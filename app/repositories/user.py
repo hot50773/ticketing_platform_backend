@@ -24,13 +24,10 @@ from app.libs.clock.functional import now_utc
 logger = logging.getLogger(__name__)
 
 class UserRepository:
-    """Repository class managing database transactions and persistence for Venue, Zone, and Seat."""
-
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self.session_factory = session_factory
 
     async def create_user(self, user_data: UserCreate) -> User:
-        """Persists a new Venue record in the database."""
         async with self.session_factory() as session:
             try:
                 user = User(
@@ -50,7 +47,6 @@ class UserRepository:
                 ) from exc
 
     async def get_users(self, pagination: PaginationParams) -> Page[User]:
-        """Retrieves one page of non-deleted venues ordered by ID."""
         async with self.session_factory() as session:
             stmt = select(User).where(User.deleted_at == None).order_by(User.id)
             return await paginate(session, stmt, pagination, User)

@@ -10,7 +10,6 @@ class UserCreate(SQLModel):
     password: str | None = Field(default=None, max_length=100)
 
 class UserResponse(SQLModel):
-    """Schema representing the API input required to create a new user."""
     id: int
     created_at: datetime
     updated_at: datetime
