@@ -7,20 +7,20 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_column_queries.py\"",
-            "statusMessage": "檢查 ORM 欄位級別查詢",
-            "timeout": 15
+            "timeout": 15,
+            "statusMessage": "檢查 ORM 欄位級別查詢"
           },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_redundant_comments.py\"",
-            "statusMessage": "檢查重述程式碼的註解",
-            "timeout": 15
+            "timeout": 15,
+            "statusMessage": "檢查重述程式碼的註解"
           },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_inline_imports.py\"",
-            "statusMessage": "檢查 inline import",
-            "timeout": 15
+            "timeout": 15,
+            "statusMessage": "檢查 inline import"
           }
         ]
       }
@@ -31,11 +31,14 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_changed_files.py\"",
-            "statusMessage": "掃描本輪改動的檔案",
-            "timeout": 30
+            "timeout": 30,
+            "statusMessage": "掃描本輪改動的檔案"
           }
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
   }
 }
