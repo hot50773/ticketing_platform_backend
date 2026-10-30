@@ -15,10 +15,10 @@ from typing import Protocol
 from redis import RedisError
 
 
+from app.aggregates.order import OrderAggregate
 from app.cache.event_layout import EventLayoutCache
 from app.models import Order
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
-from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
 from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal
 from app.schemas import Page, PaginationParams
@@ -85,7 +85,6 @@ class OrderService:
     def __init__(
         self,
         order_repository: OrderRepository,
-        event_repository: EventRepository,
         order_validator: OrderValidator,
         order_calculator: OrderCalculator,
         order_schema_mapper: OrderSchemaMapper,
@@ -94,7 +93,6 @@ class OrderService:
         order_expiration_scheduler: OrderExpirationQueue,
     ):
         self._repository = order_repository
-        self._event_repository = event_repository
         self._payment_gateway = payment_gateway
         self._cache = event_layout_cache
         self._validator = order_validator
@@ -160,43 +158,49 @@ class OrderService:
             return self._mapper.to_order_detail(order_aggr.with_tickets())
 
     async def cancel_order(self, order_id: int) -> OrderResponse:
-        """flow: assert cancellable -> mark CANCELLED -> release seats."""
-        response, order_data = await self._cancel_order(order_id)
-        # TODO: nothing retries a release that fails here, so the seats stay
-        #  held until someone frees them by hand.
-        await self.release_seats_by_order(order_data)
+        async with self._repository.load_for_release(order_id) as order_aggr:
+            self._validator.validate_cancellable(order_aggr.state)
+            order_data = order_aggr.with_tickets()
+            await order_aggr.check_and_release_seats()
+            await order_aggr.cancel_order()
+            response = self._mapper.to_order(order_aggr.order)
+
+        await self._release_cached_seats(order_data)
         return response
 
-    async def _cancel_order(self, order_id: int) -> tuple[OrderResponse, OrderWithTicketsInternal]:
-        async with self._repository.load_for_update(order_id) as order_aggr:
-            self._validator.validate_cancellable(order_aggr.state)
-            await order_aggr.cancel_order()
-            return self._mapper.to_order(order_aggr.order), order_aggr.with_tickets()
-
     async def check_order_expiration(self, order_id: int) -> None:
-        async with self._repository.load_for_update(order_id) as order_aggr:
-            should_run = self._validator.check_deletable(order_aggr.state)
-            if should_run:
-                await order_aggr.soft_delete_cascade(OrderDelete(reason="RESERVATION EXPIRED WITHOUT PAYMENT"))
+        order_data = None
+        async with self._repository.load_for_release(order_id) as order_aggr:
+            if self._validator.check_deletable(order_aggr.state):
+                order_data = await self._release_and_soft_delete(
+                    order_aggr, OrderDelete(reason="RESERVATION EXPIRED WITHOUT PAYMENT")
+                )
 
-        if should_run:
-            await self.release_seats_by_order(order_aggr.with_tickets())
+        if order_data is not None:
+            await self._release_cached_seats(order_data)
 
     async def delete_order(self, order_id: int, payload: OrderDelete) -> None:
-        order_data = await self._delete_order(
-            order_id, payload
-        )
-        await self.release_seats_by_order(order_data)
+        async with self._repository.load_for_release(order_id) as order_aggr:
+            if not self._validator.check_deletable(order_aggr.state):
+                raise Exception(f"Order {order_id} cannot be deleted")
+            order_data = await self._release_and_soft_delete(order_aggr, payload)
 
-    async def release_seats_by_order(self, order_data: OrderWithTicketsInternal):
-        event_id = order_data.order.event_id
-        event_seat_ids = [ticket.event_seat_id for ticket in order_data.tickets]
+        await self._release_cached_seats(order_data)
 
-        async with self._event_repository.load_for_update(event_id) as event_aggr:
-            await event_aggr.check_and_release_seats(event_seat_ids)
+    @staticmethod
+    async def _release_and_soft_delete(
+        order_aggr: OrderAggregate, payload: OrderDelete
+    ) -> OrderWithTicketsInternal:
+        order_data = order_aggr.with_tickets()
+        await order_aggr.check_and_release_seats()
+        await order_aggr.soft_delete_cascade(payload)
+        return order_data
 
+    async def _release_cached_seats(self, order_data: OrderWithTicketsInternal) -> None:
+        # TODO: a failure here leaves the bits set while Postgres says AVAILABLE;
+        #  rebuilding the sold bitmap from Postgres would recover the seats.
         await self._cache.release_seats(
-            event_id=event_id,
+            event_id=order_data.order.event_id,
             seats=[
                 SeatPositionInternal(
                     event_zone_id=ticket.event_zone_id,
@@ -205,13 +209,6 @@ class OrderService:
                 for ticket in order_data.tickets
             ],
         )
-
-    async def _delete_order(self, order_id: int, payload: OrderDelete) -> OrderWithTicketsInternal:
-        async with self._repository.load_for_update(order_id) as order_aggr:
-            if not self._validator.check_deletable(order_aggr.state):
-                raise Exception(f"Order {order_id} cannot be deleted")
-            await order_aggr.soft_delete_cascade(payload)
-            return order_aggr.with_tickets()
 
     async def execute_payment(self, order_id: int, payload: OrderPay) -> OrderResponse:
         async with self._repository.load_for_update(order_id) as order_aggr:

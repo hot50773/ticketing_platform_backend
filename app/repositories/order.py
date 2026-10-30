@@ -65,6 +65,19 @@ class OrderRepository:
                 raise
 
     @asynccontextmanager
+    async def load_for_release(self, order_id: int) -> AsyncIterator[OrderAggregate]:
+        """Shared, as in load_for_create(): bookings never queue behind a release."""
+        async with self.session_factory() as session:
+            try:
+                order = await self._get_and_check_order(session, order_id, for_update=True)
+                event = await self._lock_event_for_share(session, order.event_id)
+                yield OrderAggregate(session, order, EventAggregate(session, event))
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
+
+    @asynccontextmanager
     async def load_for_create(
         self, payload: OrderCreate
     ) -> AsyncIterator[OrderAggregateFactory]:

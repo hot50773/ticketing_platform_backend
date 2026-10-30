@@ -126,7 +126,6 @@ class Container(containers.DeclarativeContainer):
     order_service = providers.Factory(
         OrderService,
         order_repository=order_repository,
-        event_repository=event_repository,
         order_validator=order_validator,
         order_calculator=order_calculator,
         order_schema_mapper=order_schema_mapper,

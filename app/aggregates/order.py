@@ -31,6 +31,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
+from app.aggregates.event import EventAggregate
 from app.enums import OrderStatus, PaymentStatus
 from app.libs.clock.functional import now_utc
 from app.models import EventSeat, Order, OrderTicket
@@ -72,9 +73,14 @@ TICKET_DETAIL_LOADER = (
 class OrderAggregate:
     """One order and its tickets, bound to the transaction that loaded it."""
 
-    def __init__(self, session: AsyncSession, order: Order):
+    def __init__(
+        self, session: AsyncSession, order: Order, event: EventAggregate | None = None
+    ):
         self._session = session
         self._order = order
+        # FIXME: load_for_release() should yield both aggregates and let
+        #  OrderService call each, instead of nesting the event in here.
+        self._event = event
 
     @property
     def order(self) -> Order:
@@ -173,6 +179,15 @@ class OrderAggregate:
         of the customer's history, and the event rules deliberately count it."""
         self._order.status = OrderStatus.CANCELLED
         await self._apply(self._order)
+
+    async def check_and_release_seats(self) -> None:
+        """Hands the order's seats back in this transaction. Call it before
+        soft_delete_cascade(), which hides the tickets it reads."""
+        if self._event is None:
+            raise RuntimeError("Releasing seats needs the event locked by load_for_release()")
+        await self._event.check_and_release_seats(
+            [ticket.event_seat_id for ticket in self._order.tickets]
+        )
 
     async def soft_delete_cascade(self, payload: OrderDelete) -> None:
         """Soft-deletes the order and its tickets.

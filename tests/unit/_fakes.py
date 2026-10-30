@@ -84,7 +84,6 @@ class FakeAggregate:
         self._order_count = order_count
         self._occupied = occupied
         self._zone_price = zone_price
-        self.released_seat_ids: list[int] = []
 
     @property
     def event(self) -> Event:
@@ -160,11 +159,6 @@ class FakeAggregate:
         self.calls.append("sync_zone_seats")
         return EventSeatSyncCountsInternal(created_count=1, deleted_count=0, seat_count=1)
 
-    async def check_and_release_seats(self, event_seat_ids: list[int]) -> list[int]:
-        self.calls.append("check_and_release_seats")
-        self.released_seat_ids.extend(event_seat_ids)
-        return event_seat_ids
-
 
 class FakeEventRepository:
     """Hands out a FakeAggregate through the same context-manager API."""
@@ -175,9 +169,8 @@ class FakeEventRepository:
         order_count: int = 0,
         occupied: int = 0,
         zone_price: int | None = 1500,
-        calls: list[str] | None = None,
     ):
-        self.calls: list[str] = calls if calls is not None else []
+        self.calls: list[str] = []
         self.aggregate = FakeAggregate(
             self.calls, an_event(is_active), order_count, occupied, zone_price
         )
@@ -320,6 +313,7 @@ class FakeOrderAggregate:
         self.calls = calls
         self.pricing = pricing
         self.order = an_order(pricing)
+        self.released_seat_ids: list[int] = []
 
     @property
     def state(self) -> OrderStateInternal:
@@ -333,6 +327,14 @@ class FakeOrderAggregate:
     async def cancel_order(self) -> None:
         self.calls.append("cancel_order")
         self.order.status = OrderStatus.CANCELLED
+
+    async def check_and_release_seats(self) -> None:
+        self.calls.append("check_and_release_seats")
+        self.released_seat_ids = [t.event_seat_id for t in self.pricing.tickets]
+
+    async def soft_delete_cascade(self, payload) -> None:
+        self.calls.append("soft_delete_cascade")
+        self.order.deleted_at = now_utc()
 
     def with_tickets(self) -> OrderWithTicketsInternal:
         self.calls.append("with_tickets")
@@ -417,6 +419,7 @@ class FakeOrderRepository:
         create_error: Exception | None = None,
         status: OrderStatus = OrderStatus.PENDING,
         payment_status: PaymentStatus = PaymentStatus.PENDING,
+        payment_deadline: datetime = START,
     ):
         self.calls: list[str] = []
         event = an_event(is_active)
@@ -441,7 +444,7 @@ class FakeOrderRepository:
                     OrderTicketPricingInternal(event_seat_id=2, amount=1500),
                 ],
                 checkout_amount=3000,
-                payment_deadline=START,
+                payment_deadline=payment_deadline,
             ),
         )
         self.aggregate.order.status = status
@@ -453,6 +456,6 @@ class FakeOrderRepository:
         yield self.factory
 
     @asynccontextmanager
-    async def load_for_update(self, order_id: int):
-        self.calls.append("load_for_update")
+    async def load_for_release(self, order_id: int):
+        self.calls.append("load_for_release")
         yield self.aggregate

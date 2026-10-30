@@ -28,7 +28,6 @@ from redis import RedisError
 
 from tests.unit._fakes import (
     FakeEventLayoutCache,
-    FakeEventRepository,
     FakeOrderExpirationScheduler,
     FakeOrderRepository,
     a_seat_price,
@@ -40,7 +39,6 @@ def a_service(repository: FakeOrderRepository) -> OrderService:
     below see where the Redis hold lands relative to the insert."""
     return OrderService(
         order_repository=repository,
-        event_repository=FakeEventRepository(),
         order_validator=OrderValidator(),
         order_calculator=OrderCalculator(),
         order_schema_mapper=OrderSchemaMapper(),
@@ -148,7 +146,6 @@ def a_service_with_cache(
 ) -> OrderService:
     return OrderService(
         order_repository=repository,
-        event_repository=FakeEventRepository(),
         order_validator=OrderValidator(),
         order_calculator=OrderCalculator(),
         order_schema_mapper=OrderSchemaMapper(),
@@ -265,20 +262,17 @@ async def test_being_cancelled_mid_unlock_is_not_swallowed():
 
 
 # --------------------------------------------------------------------------- #
-# cancel_order
+# Releasing an order: cancel, delete, expiry
 #
-# Mirrors delete_order: the status change commits on its own, then the seats
-# go back - Postgres first, Redis second. The event repository and the cache
-# share the order repository's `calls` list so the whole sequence is visible.
+# The seats go back in Postgres inside the order's own transaction, so the
+# state change and the release commit together; Redis is cleared afterwards.
 # --------------------------------------------------------------------------- #
-def a_cancel_setup(
+def a_release_setup(
     repository: FakeOrderRepository,
-) -> tuple[OrderService, FakeEventRepository, FakeEventLayoutCache]:
-    event_repo = FakeEventRepository(calls=repository.calls)
+) -> tuple[OrderService, FakeEventLayoutCache]:
     cache = FakeEventLayoutCache(repository.calls)
     service = OrderService(
         order_repository=repository,
-        event_repository=event_repo,
         order_validator=OrderValidator(),
         order_calculator=OrderCalculator(),
         order_schema_mapper=OrderSchemaMapper(),
@@ -286,23 +280,22 @@ def a_cancel_setup(
         event_layout_cache=cache,
         order_expiration_scheduler=FakeOrderExpirationScheduler(),
     )
-    return service, event_repo, cache
+    return service, cache
 
 
 @pytest.mark.asyncio
-async def test_cancel_marks_cancelled_then_releases_the_seats():
+async def test_cancel_releases_the_seats_in_the_same_transaction():
     repo = FakeOrderRepository()
-    service, _, _ = a_cancel_setup(repo)
+    service, _ = a_release_setup(repo)
 
     result = await service.cancel_order(1)
 
     assert result.status == OrderStatus.CANCELLED
     assert repo.calls == [
-        "load_for_update",
-        "cancel_order",
+        "load_for_release",
         "with_tickets",
-        "load_for_update",
         "check_and_release_seats",
+        "cancel_order",
         "release_seats",
     ]
 
@@ -310,11 +303,11 @@ async def test_cancel_marks_cancelled_then_releases_the_seats():
 @pytest.mark.asyncio
 async def test_cancel_releases_the_seats_of_this_order():
     repo = FakeOrderRepository()
-    service, event_repo, cache = a_cancel_setup(repo)
+    service, cache = a_release_setup(repo)
 
     await service.cancel_order(1)
 
-    assert event_repo.aggregate.released_seat_ids == [1, 2]
+    assert repo.aggregate.released_seat_ids == [1, 2]
     (event_id, handed_back), = cache.released
     assert event_id == 1
     assert [(s.event_zone_id, s.serial_number) for s in handed_back] == [(10, 0), (10, 1)]
@@ -331,9 +324,36 @@ async def test_cancel_releases_the_seats_of_this_order():
 )
 async def test_an_uncancellable_order_never_touches_the_seats(status, payment_status):
     repo = FakeOrderRepository(status=status, payment_status=payment_status)
-    service, _, _ = a_cancel_setup(repo)
+    service, _ = a_release_setup(repo)
 
     with pytest.raises(OrderNotCancellableError):
         await service.cancel_order(1)
 
-    assert repo.calls == ["load_for_update"]
+    assert repo.calls == ["load_for_release"]
+
+
+@pytest.mark.asyncio
+async def test_an_expired_order_is_released_before_it_is_soft_deleted():
+    """soft_delete_cascade hides the tickets the release reads."""
+    repo = FakeOrderRepository(payment_deadline=now_utc() - timedelta(seconds=1))
+    service, _ = a_release_setup(repo)
+
+    await service.check_order_expiration(1)
+
+    assert repo.calls == [
+        "load_for_release",
+        "with_tickets",
+        "check_and_release_seats",
+        "soft_delete_cascade",
+        "release_seats",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_order_still_within_its_deadline_is_left_alone():
+    repo = FakeOrderRepository()
+    service, _ = a_release_setup(repo)
+
+    await service.check_order_expiration(1)
+
+    assert repo.calls == ["load_for_release"]
