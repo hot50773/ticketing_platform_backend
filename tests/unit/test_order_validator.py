@@ -143,3 +143,29 @@ def test_paid_order_is_not_cancellable(validator):
 def test_order_with_a_charge_in_flight_is_not_cancellable(validator):
     with pytest.raises(OrderNotCancellableError):
         validator.validate_cancellable(order_state(payment_status=PaymentStatus.IN_PROGRESS))
+
+
+# --------------------------------------------------------------------------- #
+# D. check_deletable
+# --------------------------------------------------------------------------- #
+def expired_state(payment_status: PaymentStatus) -> OrderStateInternal:
+    return OrderStateInternal(
+        id=1,
+        status=OrderStatus.PENDING,
+        payment_status=payment_status,
+        payment_deadline=NOW - timedelta(seconds=1),
+    )
+
+
+@pytest.mark.parametrize("payment_status", [PaymentStatus.PENDING, PaymentStatus.FAILED])
+def test_expired_unpaid_order_is_deletable(validator, payment_status):
+    assert validator.check_deletable(expired_state(payment_status))
+
+
+def test_expired_order_with_a_retry_in_flight_is_kept(validator):
+    """The retry may still succeed - deleting now would release paid-for seats."""
+    assert not validator.check_deletable(expired_state(PaymentStatus.IN_PROGRESS))
+
+
+def test_order_still_within_its_deadline_is_kept(validator):
+    assert not validator.check_deletable(order_state(payment_status=PaymentStatus.FAILED))

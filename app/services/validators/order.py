@@ -128,9 +128,13 @@ class OrderValidator:
             )
 
     def check_deletable(self, state: OrderStateInternal) -> bool:
-        """Soft-deleting releases the seats, so a settled purchase must not go
-        this way. Cancelled and unpaid orders are both fine to release."""
+        """Soft-deleting releases the seats, so only an expired order nobody is
+        paying for qualifies. FAILED counts: a retry would have moved it to
+        IN_PROGRESS, so FAILED means no attempt is in flight."""
         now = self._now()
         is_expired = state.payment_deadline is not None and state.payment_deadline < now
-        is_pending = (state.status == OrderStatus.PENDING and state.payment_status == PaymentStatus.PENDING)
-        return is_pending and is_expired
+        is_unpaid = state.status == OrderStatus.PENDING and state.payment_status in (
+            PaymentStatus.PENDING,
+            PaymentStatus.FAILED,
+        )
+        return is_unpaid and is_expired
