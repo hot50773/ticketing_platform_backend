@@ -33,13 +33,6 @@
             "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_changed_files.py\"",
             "statusMessage": "掃描本輪改動的檔案",
             "timeout": 30
-          },
-          {
-            "type": "agent",
-            "prompt": "審查這一輪改動新增或修改的註解與 docstring。\n\n範圍：`git diff HEAD -- '*.py'` 的新增行（+ 開頭）。只看註解與 docstring，沒有任何新增或修改的註解就直接通過 —— 不要為了交差去審既有內容。\n\n準則：讀 .claude/hooks/comment-criteria.md，完全照它判。\n\n有問題就回報檔案、行號、違反的是哪一條、該怎麼改；沒問題就通過。\n\n你只判註解品質這一件事。不要評估這一輪的計畫有沒有做完、待辦有沒有清掉、該不該 commit、助理的回覆寫得好不好 —— 那些一律不是不通過的理由。被權限擋下或等使用者決定而未完成的事項同樣與你無關。",
-            "model": "claude-sonnet-5",
-            "timeout": 300,
-            "statusMessage": "審查本輪新增的註解"
           }
         ]
       }
