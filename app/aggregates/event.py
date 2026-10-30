@@ -325,9 +325,7 @@ class EventAggregate:
     async def sync_zone_seats(
         self, event_zone_id: int, seats: list[EventSeatLayout]
     ) -> EventSeatSyncCountsInternal:
-        """flow: load what the zone has -> diff against the payload -> apply.
-
-        No renumbering - a survivor keeps its serial_number, which *is* its
+        """No renumbering - a survivor keeps its serial_number, which *is* its
         Redis bit offset. New seats take max(serial_number) + 1 counting
         soft-deleted rows, so a retired offset is never handed to a different
         seat.

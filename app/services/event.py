@@ -47,10 +47,7 @@ class EventService:
         self._cache = event_layout_cache
 
     async def create_event(self, payload: EventCreate) -> EventDetailResponse:
-        """flow: validate holding time -> create event + clone venue layout.
-
-        The event is always created unpublished with every zone price unset.
-        """
+        """The event is always created unpublished with every zone price unset."""
         self._validator.validate_holding_time(payload)
         async with self._repository.create(payload) as event_aggr:
             return self._mapper.to_event_detail(await event_aggr.layout())
@@ -76,9 +73,7 @@ class EventService:
     async def update_event_holding_time(
         self, event_id: int, payload: EventHoldingTimeUpdate
     ) -> EventResponse:
-        """flow: assert unpublished -> validate start_at / end_at -> update.
-
-        Publication is checked before the dates so a published event is told to
+        """Publication is checked before the dates so a published event is told to
         unpublish first, rather than being sent to fix dates it cannot change.
         """
         async with self._repository.load_for_update(event_id) as event_aggr:
@@ -88,9 +83,7 @@ class EventService:
             return self._mapper.to_event(event_aggr.event)
 
     async def publish_event(self, event_id: int) -> EventResponse:
-        """flow: assert every zone exists and is priced -> put on sale.
-
-        Publishing and unpublishing share nothing but the column they write:
+        """Publishing and unpublishing share nothing but the column they write:
         different preconditions, different failure modes, and publishing is
         where the layout freezes. They are therefore separate use cases.
         """
@@ -104,9 +97,7 @@ class EventService:
             return self._mapper.to_event(event_aggr.event)
 
     async def unpublish_event(self, event_id: int) -> EventResponse:
-        """flow: assert no active order -> take off sale -> drop the bitmaps.
-
-        The cache is cleared *after* the transaction commits, the mirror image
+        """The cache is cleared *after* the transaction commits, the mirror image
         of publish_event. Dropping a still-live event's bitmap would make every
         seat read as non-existent, so it must not happen until the event is
         certainly off sale; a bitmap left behind by a failed clear is inert.
@@ -121,8 +112,7 @@ class EventService:
         return response
 
     async def delete_event(self, event_id: int) -> None:
-        """flow: assert no active order -> soft-delete event + zones + seats ->
-        drop the bitmaps. Cleared after the commit, as in unpublish_event.
+        """The bitmaps are cleared after the commit, as in unpublish_event.
 
         The delete hands back the zone ids it removed; querying for them
         afterwards would come back empty.

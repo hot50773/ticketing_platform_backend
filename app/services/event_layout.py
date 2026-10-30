@@ -39,7 +39,6 @@ class EventLayoutService:
     async def create_event_zone(
         self, event_id: int, payload: EventZoneCreate
     ) -> EventZoneResponse:
-        """flow: assert unpublished -> create the zone and its seats."""
         async with self._repository.load_for_update(event_id) as event_aggr:
             self._validator.validate_unpublished(event_aggr.state)
             created = await event_aggr.add_zone(payload)
@@ -68,9 +67,7 @@ class EventLayoutService:
     async def replace_event_zone_seats(
         self, event_id: int, event_zone_id: int, payload: EventSeatLayoutUpdate
     ) -> EventSeatLayoutSyncResponse:
-        """flow: assert unpublished -> assert no occupied seat -> sync the layout.
-
-        The occupied-seat check and the rewrite share one locked transaction, so
+        """The occupied-seat check and the rewrite share one locked transaction, so
         a seat cannot be claimed in between and then silently dropped.
         """
         async with self._repository.load_for_update(event_id) as event_aggr:

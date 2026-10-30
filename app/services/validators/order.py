@@ -32,9 +32,7 @@ class OrderValidator:
         self._now = clock
 
     def validate_event_orderable(self, state: EventStateInternal) -> None:
-        """flow: published -> not started yet.
-
-        Publication first, or an event that never opened gets told the sale
+        """Publication first, or an event that never opened gets told the sale
         closed. Sales close at start_at, not end_at - a seat sold after the
         doors open is one nobody can use.
         """
@@ -85,10 +83,7 @@ class OrderValidator:
             raise TicketPriceNotReadyError(err_msg)
 
     def validate_payable(self, state: OrderStateInternal) -> None:
-        """flow: not cancelled -> not already settled -> no charge in flight
-                 -> deadline not passed.
-
-        IN_PROGRESS is rejected rather than retried: the previous attempt may
+        """IN_PROGRESS is rejected rather than retried: the previous attempt may
         still be in the gateway, and charging twice is the one failure the
         customer will not forgive. A stuck claim is cleared by the expiry job,
         not by the next request.
@@ -111,7 +106,6 @@ class OrderValidator:
             )
 
     def validate_cancellable(self, state: OrderStateInternal) -> None:
-        """flow: not cancelled -> not already settled -> no charge in flight."""
         if state.status == OrderStatus.CANCELLED:
             raise OrderNotCancellableError(f"Order {state.id} is already cancelled")
 
