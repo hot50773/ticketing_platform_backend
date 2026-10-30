@@ -11,10 +11,12 @@ from app.exceptions import (
     EntityNotFoundError,
     EventNotPublishedError,
     EventStartedError,
+    OrderNotCancellableError,
     TicketPriceNotReadyError,
 )
+from app.enums import OrderStatus, PaymentStatus
 from app.schemas.event import EventStateInternal
-from app.schemas.order import OrderCreate
+from app.schemas.order import OrderCreate, OrderStateInternal
 from app.services.validators.order import OrderValidator
 from tests.unit._fakes import a_seat_price as seat, a_seats_pricing
 
@@ -100,3 +102,44 @@ def test_unpriced_zone_is_rejected(validator):
 def test_free_seat_is_not_an_unpriced_seat(validator):
     """0 is a price - a genuinely free zone - and only NULL means unset."""
     validator.validate_seats_input(payload([1]), a_pricing(seat(1, price=0)))
+
+
+# --------------------------------------------------------------------------- #
+# C. validate_cancellable
+# --------------------------------------------------------------------------- #
+def order_state(
+    status: OrderStatus = OrderStatus.PENDING,
+    payment_status: PaymentStatus = PaymentStatus.PENDING,
+) -> OrderStateInternal:
+    return OrderStateInternal(
+        id=1,
+        status=status,
+        payment_status=payment_status,
+        payment_deadline=NOW + timedelta(minutes=10),
+    )
+
+
+def test_unpaid_order_is_cancellable(validator):
+    validator.validate_cancellable(order_state())
+
+
+def test_order_with_a_failed_payment_is_cancellable(validator):
+    """A failed charge leaves the order retryable, so it can still be dropped."""
+    validator.validate_cancellable(order_state(payment_status=PaymentStatus.FAILED))
+
+
+def test_cancelled_order_is_not_cancelled_twice(validator):
+    with pytest.raises(OrderNotCancellableError):
+        validator.validate_cancellable(order_state(status=OrderStatus.CANCELLED))
+
+
+def test_paid_order_is_not_cancellable(validator):
+    with pytest.raises(OrderNotCancellableError):
+        validator.validate_cancellable(
+            order_state(status=OrderStatus.CONFIRMED, payment_status=PaymentStatus.SUCCESS)
+        )
+
+
+def test_order_with_a_charge_in_flight_is_not_cancellable(validator):
+    with pytest.raises(OrderNotCancellableError):
+        validator.validate_cancellable(order_state(payment_status=PaymentStatus.IN_PROGRESS))

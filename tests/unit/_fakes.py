@@ -28,7 +28,9 @@ from app.schemas.event import (
 )
 from app.schemas.order import (
     OrderCreateInternal,
+    OrderStateInternal,
     OrderTicketInternal,
+    OrderTicketPricingInternal,
     OrderWithTicketsInternal,
 )
 
@@ -82,6 +84,7 @@ class FakeAggregate:
         self._order_count = order_count
         self._occupied = occupied
         self._zone_price = zone_price
+        self.released_seat_ids: list[int] = []
 
     @property
     def event(self) -> Event:
@@ -157,6 +160,11 @@ class FakeAggregate:
         self.calls.append("sync_zone_seats")
         return EventSeatSyncCountsInternal(created_count=1, deleted_count=0, seat_count=1)
 
+    async def check_and_release_seats(self, event_seat_ids: list[int]) -> list[int]:
+        self.calls.append("check_and_release_seats")
+        self.released_seat_ids.extend(event_seat_ids)
+        return event_seat_ids
+
 
 class FakeEventRepository:
     """Hands out a FakeAggregate through the same context-manager API."""
@@ -167,8 +175,9 @@ class FakeEventRepository:
         order_count: int = 0,
         occupied: int = 0,
         zone_price: int | None = 1500,
+        calls: list[str] | None = None,
     ):
-        self.calls: list[str] = []
+        self.calls: list[str] = calls if calls is not None else []
         self.aggregate = FakeAggregate(
             self.calls, an_event(is_active), order_count, occupied, zone_price
         )
@@ -304,12 +313,26 @@ def an_order(pricing: OrderCreateInternal) -> Order:
 
 
 class FakeOrderAggregate:
-    """What place() hands back: only what the mapper reads off it."""
+    """What place() and load_for_update() hand back: what the mapper and the
+    rules read off it, plus the mutations the service asks for."""
 
     def __init__(self, calls: list[str], pricing: OrderCreateInternal):
         self.calls = calls
         self.pricing = pricing
         self.order = an_order(pricing)
+
+    @property
+    def state(self) -> OrderStateInternal:
+        return OrderStateInternal(
+            id=self.order.id,
+            status=self.order.status,
+            payment_status=self.order.payment_status,
+            payment_deadline=self.order.payment_deadline,
+        )
+
+    async def cancel_order(self) -> None:
+        self.calls.append("cancel_order")
+        self.order.status = OrderStatus.CANCELLED
 
     def with_tickets(self) -> OrderWithTicketsInternal:
         self.calls.append("with_tickets")
@@ -392,6 +415,8 @@ class FakeOrderRepository:
         start_at: datetime | None = None,
         seats: list[SeatPriceInternal] | None = None,
         create_error: Exception | None = None,
+        status: OrderStatus = OrderStatus.PENDING,
+        payment_status: PaymentStatus = PaymentStatus.PENDING,
     ):
         self.calls: list[str] = []
         event = an_event(is_active)
@@ -404,7 +429,30 @@ class FakeOrderRepository:
             create_error,
         )
 
+        # The order an existing-order use case (cancel, delete) loads: seats 1
+        # and 2 at 1500 each, in whatever state the test asked for.
+        self.aggregate = FakeOrderAggregate(
+            self.calls,
+            OrderCreateInternal(
+                user_id=1,
+                comment=None,
+                tickets=[
+                    OrderTicketPricingInternal(event_seat_id=1, amount=1500),
+                    OrderTicketPricingInternal(event_seat_id=2, amount=1500),
+                ],
+                checkout_amount=3000,
+                payment_deadline=START,
+            ),
+        )
+        self.aggregate.order.status = status
+        self.aggregate.order.payment_status = payment_status
+
     @asynccontextmanager
     async def load_for_create(self, payload):
         self.calls.append("load_for_create")
         yield self.factory
+
+    @asynccontextmanager
+    async def load_for_update(self, order_id: int):
+        self.calls.append("load_for_update")
+        yield self.aggregate

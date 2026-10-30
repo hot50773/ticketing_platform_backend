@@ -159,16 +159,19 @@ class OrderService:
         async with self._repository.load(order_id) as order_aggr:
             return self._mapper.to_order_detail(order_aggr.with_tickets())
 
-    # async def cancel_order(self, order_id: int) -> OrderResponse:
-    #     """flow: assert cancellable -> mark CANCELLED.
-    #
-    #     The row survives. A cancelled order still counts against unpublishing
-    #     the event; only a released (soft-deleted) one stops counting.
-    #     """
-    #     async with self._repository.load_for_update(order_id) as order_aggr:
-    #         self._validator.validate_cancellable(order_aggr.state)
-    #         await order_aggr.cancel_order()
-    #         return self._mapper.to_order(order_aggr.order)
+    async def cancel_order(self, order_id: int) -> OrderResponse:
+        """flow: assert cancellable -> mark CANCELLED -> release seats."""
+        response, order_data = await self._cancel_order(order_id)
+        # TODO: the sweep only covers soft-deleted orders, so a release failing
+        #  here leaves the seats held until it covers CANCELLED too.
+        await self.release_seats_by_order(order_data)
+        return response
+
+    async def _cancel_order(self, order_id: int) -> tuple[OrderResponse, OrderWithTicketsInternal]:
+        async with self._repository.load_for_update(order_id) as order_aggr:
+            self._validator.validate_cancellable(order_aggr.state)
+            await order_aggr.cancel_order()
+            return self._mapper.to_order(order_aggr.order), order_aggr.with_tickets()
 
     async def check_order_expiration(self, order_id: int) -> None:
         async with self._repository.load_for_update(order_id) as order_aggr:

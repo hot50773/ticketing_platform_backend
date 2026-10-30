@@ -111,14 +111,20 @@ class OrderValidator:
             )
 
     def validate_cancellable(self, state: OrderStateInternal) -> None:
-        """A paid order is refunded, not cancelled - cancelling it would leave
-        the money collected and the seats released."""
+        """flow: not cancelled -> not already settled -> no charge in flight."""
         if state.status == OrderStatus.CANCELLED:
             raise OrderNotCancellableError(f"Order {state.id} is already cancelled")
 
         if state.payment_status == PaymentStatus.SUCCESS:
             raise OrderNotCancellableError(
-                f"Order {state.id} is paid for; refund it instead of cancelling"
+                f"Order {state.id} is paid for and cannot be cancelled"
+            )
+
+        # Same reason validate_payable rejects it: the charge may still go
+        # through, and by then the seats would already be someone else's.
+        if state.payment_status == PaymentStatus.IN_PROGRESS:
+            raise OrderNotCancellableError(
+                f"Order {state.id} has a payment in progress"
             )
 
     def check_deletable(self, state: OrderStateInternal) -> bool:

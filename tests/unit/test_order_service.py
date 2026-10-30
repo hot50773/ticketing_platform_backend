@@ -1,4 +1,4 @@
-"""OrderService unit tests for create_order: no database, a recording fake factory.
+"""OrderService unit tests for create_order and cancel_order: no database, a recording fake factory.
 
 These cover what e2e cannot see - that a rejected order never reaches the
 insert, and that the amounts written come from the event rather than from the
@@ -14,8 +14,10 @@ from app.exceptions import (
     EntityNotFoundError,
     EventNotPublishedError,
     EventStartedError,
+    OrderNotCancellableError,
     TicketPriceNotReadyError,
 )
+from app.enums import OrderStatus, PaymentStatus
 from app.libs.clock.functional import now_utc
 from app.schemas.order import OrderCreate
 from app.services.calculators.order import DEFAULT_PAYMENT_WINDOW, OrderCalculator
@@ -260,3 +262,78 @@ async def test_being_cancelled_mid_unlock_is_not_swallowed():
 
     with pytest.raises(asyncio.CancelledError):
         await a_service_with_cache(repo, cache).create_order(a_payload())
+
+
+# --------------------------------------------------------------------------- #
+# cancel_order
+#
+# Mirrors delete_order: the status change commits on its own, then the seats
+# go back - Postgres first, Redis second. The event repository and the cache
+# share the order repository's `calls` list so the whole sequence is visible.
+# --------------------------------------------------------------------------- #
+def a_cancel_setup(
+    repository: FakeOrderRepository,
+) -> tuple[OrderService, FakeEventRepository, FakeEventLayoutCache]:
+    event_repo = FakeEventRepository(calls=repository.calls)
+    cache = FakeEventLayoutCache(repository.calls)
+    service = OrderService(
+        order_repository=repository,
+        event_repository=event_repo,
+        order_validator=OrderValidator(),
+        order_calculator=OrderCalculator(),
+        order_schema_mapper=OrderSchemaMapper(),
+        payment_gateway=UnimplementedPaymentGateway(),
+        event_layout_cache=cache,
+        order_expiration_scheduler=FakeOrderExpirationScheduler(),
+    )
+    return service, event_repo, cache
+
+
+@pytest.mark.asyncio
+async def test_cancel_marks_cancelled_then_releases_the_seats():
+    repo = FakeOrderRepository()
+    service, _, _ = a_cancel_setup(repo)
+
+    result = await service.cancel_order(1)
+
+    assert result.status == OrderStatus.CANCELLED
+    assert repo.calls == [
+        "load_for_update",
+        "cancel_order",
+        "with_tickets",
+        "load_for_update",
+        "check_and_release_seats",
+        "release_seats",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancel_releases_the_seats_of_this_order():
+    repo = FakeOrderRepository()
+    service, event_repo, cache = a_cancel_setup(repo)
+
+    await service.cancel_order(1)
+
+    assert event_repo.aggregate.released_seat_ids == [1, 2]
+    (event_id, handed_back), = cache.released
+    assert event_id == 1
+    assert [(s.event_zone_id, s.serial_number) for s in handed_back] == [(10, 0), (10, 1)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "payment_status"),
+    [
+        (OrderStatus.CANCELLED, PaymentStatus.PENDING),
+        (OrderStatus.CONFIRMED, PaymentStatus.SUCCESS),
+        (OrderStatus.PENDING, PaymentStatus.IN_PROGRESS),
+    ],
+)
+async def test_an_uncancellable_order_never_touches_the_seats(status, payment_status):
+    repo = FakeOrderRepository(status=status, payment_status=payment_status)
+    service, _, _ = a_cancel_setup(repo)
+
+    with pytest.raises(OrderNotCancellableError):
+        await service.cancel_order(1)
+
+    assert repo.calls == ["load_for_update"]
