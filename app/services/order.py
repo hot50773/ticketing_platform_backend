@@ -162,8 +162,8 @@ class OrderService:
     async def cancel_order(self, order_id: int) -> OrderResponse:
         """flow: assert cancellable -> mark CANCELLED -> release seats."""
         response, order_data = await self._cancel_order(order_id)
-        # TODO: the sweep only covers soft-deleted orders, so a release failing
-        #  here leaves the seats held until it covers CANCELLED too.
+        # TODO: nothing retries a release that fails here, so the seats stay
+        #  held until someone frees them by hand.
         await self.release_seats_by_order(order_data)
         return response
 

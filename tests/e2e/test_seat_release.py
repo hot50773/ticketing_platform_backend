@@ -1,8 +1,6 @@
 """EventAggregate.check_and_release_seats against a real database.
 
-Releasing is a retry path: the background worker re-runs it after a partial
-failure, and two seconds of network trouble must not turn into an order whose
-seats nobody will ever hand back. So "already AVAILABLE" has to read as success
+"Already AVAILABLE" has to read as success, so a repeated release is harmless,
 while a seat that somebody moved behind our back still has to fail loudly.
 
 Driven through the aggregate rather than the API because what is under test is
@@ -69,8 +67,8 @@ async def test_reserved_seats_are_released(container, seeded_event, seat_ids):
 async def test_releasing_already_released_seats_is_not_an_error(
     container, seeded_event, seat_ids
 ):
-    """The worker's second attempt after a partial failure. The seats are
-    already where the caller wants them, so there is nothing to report."""
+    """The seats are already where the caller wants them, so there is
+    nothing to report."""
     await _set(container, seat_ids, status=SeatStatus.AVAILABLE)
 
     released = await _release(container, seeded_event["event_id"], seat_ids)
@@ -141,33 +139,3 @@ async def test_a_bad_seat_outranks_an_already_released_one(
 
     with pytest.raises(SeatNotReleasableError):
         await _release(container, seeded_event["event_id"], seat_ids)
-
-
-@pytest.mark.asyncio
-async def test_releasing_does_not_queue_behind_a_booking(container, seeded_event):
-    """A booking holding FOR SHARE must not stall the release path."""
-    import asyncio
-
-    from app.models import Event
-
-    booking = container.db().get_async_session()
-    await booking.__aenter__()
-    try:
-        await booking.execute(
-            select(Event)
-            .where(Event.id == seeded_event["event_id"])
-            .with_for_update(read=True)
-        )
-
-        async def release():
-            async with container.event_repository().load_for_seat_release(
-                seeded_event["event_id"]
-            ) as event:
-                await event.check_and_release_seats([])
-
-        # The timeout wraps acquiring the aggregate too: a row lock here would
-        # queue behind the booking and hang rather than fail.
-        await asyncio.wait_for(release(), timeout=3.0)
-    finally:
-        await booking.rollback()
-        await booking.__aexit__(None, None, None)

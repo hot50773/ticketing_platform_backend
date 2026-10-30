@@ -47,7 +47,6 @@ from app.schemas.event import (
     EventLayoutInternal,
     EventZoneWithSeatInternal,
     EventSeatsPricingInternal,
-    PendingReleaseInternal,
     SeatPositionInternal,
 )
 
@@ -71,7 +70,6 @@ class EventLayoutCache:
     RELEASE_SEATS_SCRIPT_PATH = LUA_BASE_DIR / "release_seats.lua"
 
     SEAT_SOLD_BITMAP_KEY = "seat_sold_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否售出的紀錄表
-    PENDING_RELEASE_KEY = "pending_release"
     SEAT_EXISTENCE_BITMAP_KEY = "seat_existence_bitmap:event:{event_id}:zone:{zone_id}" # 座位是否存在的紀錄表
 
     def __init__(self, redis_client: RedisClient):
@@ -206,15 +204,8 @@ class EventLayoutCache:
         self,
         event_id: int,
         seats: list[SeatPositionInternal],
-        clear_pending: int | None = None,
     ) -> None:
-        """Clears the sold bits of seats nobody holds any more.
-
-        `clear_pending` is the order the worker flagged before it started.
-        It goes in the same Lua call as the bits so the flag can never
-        outlive them. The create-failure path has no order to name.
-        """
-        if not seats and clear_pending is None:
+        if not seats:
             return
 
         zone_id_to_seat_serials_map = self._group_serials_by_zone(
@@ -224,34 +215,10 @@ class EventLayoutCache:
         try:
             await self._release_seats_script(
                 keys=[],
-                args=[
-                    event_id,
-                    json.dumps(zone_id_to_seat_serials_map),
-                    "" if clear_pending is None else clear_pending,
-                ],
+                args=[event_id, json.dumps(zone_id_to_seat_serials_map)],
             )
             logger.info(SEATS_UNLOCKED_MSG, event_id, zone_id_to_seat_serials_map)
         except RedisError as e:
             logger.exception("Failed to release seats for event %s, zone:seat_serials - %s", event_id, zone_id_to_seat_serials_map)
             raise e
-
-    async def mark_release_pending(self, event_id: int, order_id: int) -> None:
-        """Flags a release as started, before anything is actually released.
-
-        Written first so it outlives a crash: by the time the seats are back in
-        Postgres there is no row left that would point at the unfinished work.
-        """
-        await self._redis_client.sadd(
-            self.PENDING_RELEASE_KEY, f"{event_id}:{order_id}"
-        )
-
-    async def pending_releases(self) -> list[PendingReleaseInternal]:
-        members = await self._redis_client.smembers(self.PENDING_RELEASE_KEY)
-        pending = []
-        for member in members:
-            event_id, _, order_id = member.partition(":")
-            pending.append(
-                PendingReleaseInternal(event_id=int(event_id), order_id=int(order_id))
-            )
-        return pending
 

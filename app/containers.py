@@ -4,7 +4,6 @@ import pkgutil
 from dependency_injector import containers, providers
 
 from app.cache.event_layout import EventLayoutCache
-from app.cache.job_lock import JobLock
 from app.db.postgres import Database
 from app.db.redis import RedisClient
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
@@ -17,7 +16,6 @@ from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
 from app.services.mappers.user import UserSchemaMapper
 from app.services.order import OrderService, UnimplementedPaymentGateway
-from app.services.seat_release import SeatReleaseService
 from app.services.mappers import EventSchemaMapper
 from app.services.mappers.order import OrderSchemaMapper
 from app.services.user import UserService
@@ -137,15 +135,3 @@ class Container(containers.DeclarativeContainer):
         order_expiration_scheduler=order_expiration_queue,
     )
 
-    seat_release_lock = providers.Factory(
-        JobLock, redis_client=redis_client, name="seat_release"
-    )
-
-    seat_release_service = providers.Factory(
-        SeatReleaseService,
-        order_repository=order_repository,
-        event_repository=event_repository,
-        event_layout_cache=event_layout_cache,
-        order_validator=order_validator,
-        job_lock=seat_release_lock,
-    )

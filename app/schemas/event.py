@@ -259,12 +259,6 @@ class SeatPositionInternal(SQLModel):
     serial_number: int
 
 
-class PendingReleaseInternal(SQLModel):
-    """A release the worker started but has not been seen to finish."""
-    event_id: int
-    order_id: int
-
-
 class EventSeatsPricingInternal(SQLModel):
     """The seats one order asked for, carrying the event_id that the Redis
     bitmap keys are built from.

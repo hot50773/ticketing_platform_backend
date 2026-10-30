@@ -408,9 +408,8 @@ class EventAggregate:
     async def check_and_release_seats(self, event_seat_ids: list[int]) -> list[int]:
         """Hands seats back, and reports which ones this call actually moved.
 
-        Idempotent: the release worker re-runs this after a partial failure, so
-        a seat already AVAILABLE is a repeat, not a failure. A leftover that is
-        soft-deleted or gone still raises.
+        Idempotent: a seat already AVAILABLE is a repeat, not a failure. A
+        leftover that is soft-deleted or gone still raises.
         """
         result = await self._session.execute(
             update(EventSeat)

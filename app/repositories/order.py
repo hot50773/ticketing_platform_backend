@@ -11,12 +11,8 @@ any single aggregate instance.
 """
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Any, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm.sync import update
-from sqlalchemy.sql.operators import and_
 from sqlmodel import select
 
 from app.aggregates.event import EventAggregate
@@ -27,11 +23,10 @@ from app.exceptions import (
     ORDER_NOT_FOUND_MSG,
     EntityNotFoundError,
 )
-from app.enums import OrderStatus, PaymentStatus, SeatStatus
-from app.models import Event, EventSeat, Order, OrderTicket
+from app.models import Event, Order
 from app.repositories._pagination import paginate
 from app.schemas import Page, PaginationParams
-from app.schemas.order import OrderCreate, OrderSeatInternal
+from app.schemas.order import OrderCreate
 
 
 class OrderRepository:
@@ -100,111 +95,6 @@ class OrderRepository:
         async with self.session_factory() as session:
             stmt = select(Order).where(Order.deleted_at == None).order_by(Order.id)
             return await paginate(session, stmt, pagination, Order)
-
-    async def get_expired_order_ids(self, now: datetime, limit: int) -> list[int]:
-        async with self.session_factory() as session:
-            expired_criteria = and_(
-                Order.deleted_at == None,
-                Order.status == OrderStatus.PENDING,
-                Order.payment_status.in_([PaymentStatus.PENDING, PaymentStatus.FAILED]),
-                Order.payment_deadline <= now,
-            )
-            stmt = (
-                select(Order.id)
-                .where(expired_criteria)
-                .order_by(Order.payment_deadline)
-                .limit(limit)
-            )
-            return list((await session.execute(stmt)).scalars().all())
-
-    async def process_expired_order(self, now: datetime) -> list[int]:
-        async with self.session_factory() as session:
-            expired__order_criteria = and_(
-                Order.deleted_at == None,
-                Order.status == OrderStatus.PENDING,
-                Order.payment_status == PaymentStatus.PENDING,
-                Order.payment_deadline <= now,
-            )
-            stmt = (
-                update(Order)
-                .where(expired__order_criteria)
-                .values(deleted_at=now)
-                .returning(Order.id)
-            )
-            result = session.execute(stmt)
-
-            return list((await result).scalars().all())
-
-    # async def get_unreleased_seats(self, limit: int) -> list[OrderSeatInternal]:
-    #     """Seats still RESERVED for orders that are already soft-deleted.
-    #
-    #     `limit` caps orders, not rows: half-releasing a multi-seat order would
-    #     leave the rest held with nothing left pointing at them.
-    #
-    #     Retired seats are excluded: nothing can hand them back, so leaving them
-    #     in would make every sweep pick them up and fail on them again.
-    #     """
-    #     async with self.session_factory() as session:
-    #         candidates = (
-    #             select(Order.id)
-    #             .join(OrderTicket, OrderTicket.order_id == Order.id)
-    #             .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
-    #             .where(Order.deleted_at != None)
-    #             .where(EventSeat.deleted_at == None)
-    #             .where(EventSeat.status == SeatStatus.RESERVED)
-    #             .distinct()
-    #             .order_by(Order.id)
-    #             .limit(limit)
-    #             .subquery()
-    #         )
-    #         stmt = (
-    #             select(Order, EventSeat)
-    #             .join(OrderTicket, OrderTicket.order_id == Order.id)
-    #             .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
-    #             .where(Order.id.in_(select(candidates.c.id)))
-    #             .where(EventSeat.deleted_at == None)
-    #             .where(EventSeat.status == SeatStatus.RESERVED)
-    #             .order_by(Order.id, EventSeat.id)
-    #         )
-    #         return [
-    #             OrderSeatInternal(
-    #                 order_id=order.id,
-    #                 event_id=order.event_id,
-    #                 event_seat_id=seat.id,
-    #                 event_zone_id=seat.event_zone_id,
-    #                 serial_number=seat.serial_number,
-    #             )
-    #             for order, seat in (await session.execute(stmt)).all()
-    #         ]
-
-    async def get_seats_for_orders(self, order_ids: list[int]) -> list[OrderSeatInternal]:
-        """Every seat the given orders reserved, whatever state it is in now.
-
-        Deliberately unfiltered: this resumes a release that may already have
-        handed the seats back in Postgres, which is exactly what makes them
-        invisible to get_unreleased_seats.
-        """
-        if not order_ids:
-            return []
-
-        async with self.session_factory() as session:
-            stmt = (
-                select(Order, EventSeat)
-                .join(OrderTicket, OrderTicket.order_id == Order.id)
-                .join(EventSeat, EventSeat.id == OrderTicket.event_seat_id)
-                .where(Order.id.in_(order_ids))
-                .order_by(Order.id, EventSeat.id)
-            )
-            return [
-                OrderSeatInternal(
-                    order_id=order.id,
-                    event_id=order.event_id,
-                    event_seat_id=seat.id,
-                    event_zone_id=seat.event_zone_id,
-                    serial_number=seat.serial_number,
-                )
-                for order, seat in (await session.execute(stmt)).all()
-            ]
 
     # ----------------------------------------------------------------------- #
     # Internals

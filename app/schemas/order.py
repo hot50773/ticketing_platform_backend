@@ -154,19 +154,6 @@ class OrderTicketInternal(SQLModel):
     amount: int
 
 
-class OrderSeatInternal(SQLModel):
-    """One seat an order reserved, flattened for the release worker.
-
-    Carries the zone and serial so the worker can clear the Redis bit without
-    a second trip, and the event id so it can batch a whole event at once.
-    """
-    order_id: int
-    event_id: int
-    event_seat_id: int
-    event_zone_id: int
-    serial_number: int
-
-
 class OrderWithTicketsInternal(SQLModel):
     """An order together with its resolved tickets - what a detail read returns."""
     order: "Order"
