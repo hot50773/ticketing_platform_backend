@@ -74,8 +74,8 @@ async def cancel_order(
     order_id: int,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ):
-    """Cancels the order. The row survives - a paid order must be refunded
-    instead, and a cancelled one still blocks the event from unpublishing."""
+    """Cancels the order. The row survives - a paid order cannot be
+    cancelled, and a cancelled one still blocks the event from unpublishing."""
     return await order_service.cancel_order(order_id)
 
 

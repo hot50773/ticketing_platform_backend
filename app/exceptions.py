@@ -82,13 +82,13 @@ class OrderNotPayableError(BusinessRuleViolationError):
 
 class OrderNotCancellableError(BusinessRuleViolationError):
     """Raised when cancelling an order that is already cancelled or already
-    paid for. A paid order goes through a refund, not a cancellation."""
+    paid for. There are no refunds, so a paid order stays as it is."""
     pass
 
 
 class OrderNotDeletableError(BusinessRuleViolationError):
     """Raised when soft-deleting a paid order. Deleting releases the seats, so
-    a settled purchase must be refunded rather than made to disappear."""
+    a settled purchase must not be made to disappear."""
     pass
 
 
