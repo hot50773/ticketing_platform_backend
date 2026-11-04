@@ -131,3 +131,4 @@ EVENT_SEAT_OCCUPIED_MSG = (
 )
 EVENT_SEAT_NOT_FOUND_MSG = "EventSeat(s) {event_seat_ids} not found in event {event_id}"
 ORDER_NOT_FOUND_MSG = "Order with id {order_id} not found"
+ORDER_NOT_DELETABLE_MSG = "Order #{order_id} cannot be deleted"

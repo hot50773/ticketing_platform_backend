@@ -17,6 +17,7 @@ from redis import RedisError
 
 from app.aggregates.order import OrderAggregate
 from app.cache.event_layout import EventLayoutCache
+from app.exceptions import ORDER_NOT_DELETABLE_MSG, OrderNotDeletableError
 from app.models import Order
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.order import OrderRepository
@@ -182,7 +183,7 @@ class OrderService:
     async def delete_order(self, order_id: int, payload: OrderDelete) -> None:
         async with self._repository.load_for_release(order_id) as order_aggr:
             if not self._validator.check_deletable(order_aggr.state):
-                raise Exception(f"Order {order_id} cannot be deleted")
+                raise OrderNotDeletableError(ORDER_NOT_DELETABLE_MSG.format(order_id=order_id))
             order_data = await self._release_and_soft_delete(order_aggr, payload)
 
         await self._release_cached_seats(order_data)
