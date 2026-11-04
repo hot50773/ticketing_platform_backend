@@ -32,9 +32,9 @@ async def price_every_zone(client: AsyncClient, seeded_event: dict):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_list_events_is_paginated(async_client: AsyncClient, seeded_event: dict):
-    body = (await async_client.get(f"{API}?page=1&page_size=10")).json()
+    body = (await async_client.get(f"{API}?page=1&page_size=20")).json()
     assert body["total"] == 1
-    assert body["page"] == 1 and body["page_size"] == 10
+    assert body["page"] == 1 and body["page_size"] == 20
     assert body["items"][0]["id"] == seeded_event["event_id"]
 
 

@@ -62,6 +62,5 @@ class RedisSeatLockFailure(enum.StrEnum):
 
 class PageSize(enum.IntEnum):
     """A closed set so every list page can be pre-cached per size."""
-    SMALL = 10
     MEDIUM = 20
     LARGE = 50
