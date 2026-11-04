@@ -19,7 +19,12 @@ from app.schemas.event import EventCreate, EventHoldingTimeUpdate
 from app.services.event import EventService
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
-from tests.unit._fakes import START, FakeEventLayoutCache, FakeEventRepository
+from tests.unit._fakes import (
+    START,
+    FakeEventLayoutCache,
+    FakeEventListCache,
+    FakeEventRepository,
+)
 
 
 def a_service(
@@ -31,7 +36,8 @@ def a_service(
         event_repository=repository,
         event_rule_validator=EventRuleValidator(),
         event_schema_mapper=EventSchemaMapper(),
-        event_layout_cache=cache or FakeEventLayoutCache(repository.calls),
+        seat_cache=cache or FakeEventLayoutCache(repository.calls),
+        event_list_cache=FakeEventListCache(repository.calls),
     )
 
 
@@ -86,7 +92,8 @@ async def test_delete_reads_and_writes_in_the_same_transaction():
     await a_service(repo).delete_event(1)
 
     assert repo.calls == [
-        "load_for_update", "order_stats", "soft_delete_cascade", "clear_event_layouts",
+        "load_for_update", "order_stats", "soft_delete_cascade", "clear_seat_layouts",
+        "refresh_all",
     ]
 
 
@@ -116,7 +123,9 @@ async def test_publish_checks_prices_not_orders():
     repo = FakeEventRepository()
     await a_service(repo).publish_event(1)
 
-    assert repo.calls == ["load_for_update", "event_layout", "init_event_layouts", "publish"]
+    assert repo.calls == [
+        "load_for_update", "event_layout", "init_event_layouts", "publish", "refresh_all",
+    ]
 
 
 @pytest.mark.asyncio
@@ -164,7 +173,8 @@ async def test_unpublish_checks_orders_not_prices():
     await a_service(repo).unpublish_event(1)
 
     assert repo.calls == [
-        "load_for_update", "order_stats", "zone_ids", "unpublish", "clear_event_layouts",
+        "load_for_update", "order_stats", "zone_ids", "unpublish", "clear_seat_layouts",
+        "refresh_all",
     ]
 
 
@@ -176,7 +186,7 @@ async def test_unpublish_clears_the_bitmap_only_after_it_writes():
     cache = FakeEventLayoutCache(repo.calls)
     await a_service(repo, cache).unpublish_event(1)
 
-    assert repo.calls.index("unpublish") < repo.calls.index("clear_event_layouts")
+    assert repo.calls.index("unpublish") < repo.calls.index("clear_seat_layouts")
     assert cache.cleared == [(1, [10])]
 
 
@@ -186,7 +196,7 @@ async def test_delete_clears_the_bitmap_only_after_it_writes():
     cache = FakeEventLayoutCache(repo.calls)
     await a_service(repo, cache).delete_event(1)
 
-    assert repo.calls.index("soft_delete_cascade") < repo.calls.index("clear_event_layouts")
+    assert repo.calls.index("soft_delete_cascade") < repo.calls.index("clear_seat_layouts")
     assert cache.cleared == [(1, [10])]
 
 

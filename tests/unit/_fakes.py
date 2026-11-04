@@ -190,6 +190,24 @@ class FakeEventRepository:
         self.calls.append("create")
         yield self.aggregate
 
+    async def get_events(self, pagination, mode) -> Page:
+        """Not recorded: the list refresh reads once per cached page, which would
+        drown the call order the tests assert on."""
+        return Page(items=[], total=0, page=pagination.page, page_size=pagination.page_size)
+
+
+class FakeEventListCache:
+    def __init__(self, calls: list[str]):
+        self.calls = calls
+        self.refreshed: list[Page] = []
+
+    async def get_paged_events(self, pagination) -> None:
+        return None
+
+    async def refresh_all(self, pages: list[Page]) -> None:
+        self.calls.append("refresh_all")
+        self.refreshed = pages
+
 
 class FakeEventLayoutCache:
     """Records the Redis warm-up instead of performing it.
@@ -228,8 +246,8 @@ class FakeEventLayoutCache:
             raise RedisError("fake redis is down")
         self.warmed.append(event_layout)
 
-    async def clear_event_layouts(self, event_id: int, zone_ids: list[int]) -> None:
-        self.calls.append("clear_event_layouts")
+    async def clear_seat_layouts(self, event_id: int, zone_ids: list[int]) -> None:
+        self.calls.append("clear_seat_layouts")
         if self._fail:
             raise RedisError("fake redis is down")
         self.cleared.append((event_id, zone_ids))

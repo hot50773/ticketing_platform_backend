@@ -42,15 +42,25 @@ async def create_event(
     """Creates an unpublished event and clones the venue's zone/seat layout."""
     return await event_service.create_event(payload)
 
-
-@router.get("", response_model=Page[EventResponse], status_code=status.HTTP_200_OK)
+# TODO: 加入後台設計後，要改成只有 admin 可讀取
+@router.get("/all", response_model=Page[EventResponse], status_code=status.HTTP_200_OK)
 @inject
-async def list_events(
+async def list_all_events(
     pagination: Annotated[PaginationParams, Query()],
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Lists non-deleted events, one page at a time."""
     return await event_service.list_events(pagination)
+
+
+@router.get("/selling", response_model=Page[EventResponse], status_code=status.HTTP_200_OK)
+@inject
+async def list_selling_events(
+    pagination: Annotated[PaginationParams, Query()],
+    event_service: EventService = Depends(Provide[Container.event_service]),
+):
+    """Lists selling events, one page at a time."""
+    return await event_service.list_selling_events(pagination)
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK)

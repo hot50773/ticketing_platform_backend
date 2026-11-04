@@ -110,7 +110,7 @@ class EventLayoutCache:
                 self._mark_seat_existence(bitfield=bitfield, offset=seat.serial_number)
             bitfield.execute()
 
-    async def clear_event_layouts(self, event_id: int, zone_ids: list[int]) -> None:
+    async def clear_seat_layouts(self, event_id: int, zone_ids: list[int]) -> None:
         """Drops every bitmap belonging to an event."""
         if zone_ids:
             try:

@@ -64,3 +64,10 @@ class PageSize(enum.IntEnum):
     """A closed set so every list page can be pre-cached per size."""
     MEDIUM = 20
     LARGE = 50
+
+
+class EventListMode(enum.Enum):
+    # 所有活動
+    ALL = "ALL"
+    # 販售中（已發佈且尚未開演）
+    SELLING = "SELLING"

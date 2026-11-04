@@ -16,7 +16,7 @@ from sqlmodel import SQLModel, Field
 
 from app.enums import SeatStatus
 from app.models import Event, EventZone
-from ._shared import UtcDatetime, _TableMetaMixin
+from ._shared import Page, UtcDatetime, _TableMetaMixin
 
 
 # EventZone.price is nullable: NULL means "not configured yet", which blocks
@@ -289,3 +289,7 @@ class EventSeatSyncCountsInternal(SQLModel):
     created_count: int
     deleted_count: int
     seat_count: int
+
+
+class EventListCacheFieldInternal(SQLModel):
+    data: Page[EventResponse]

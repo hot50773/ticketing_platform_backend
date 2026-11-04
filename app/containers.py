@@ -4,6 +4,7 @@ import pkgutil
 from dependency_injector import containers, providers
 
 from app.cache.event_layout import EventLayoutCache
+from app.cache.event_list import EventListCache
 from app.db.postgres import Database
 from app.db.redis import RedisClient
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
@@ -77,6 +78,7 @@ class Container(containers.DeclarativeContainer):
 
     # Cache
     event_layout_cache = providers.Factory(EventLayoutCache, redis_client=redis_client)
+    event_list_cache = providers.Factory(EventListCache, redis_client=redis_client)
 
     # Domain rule validators (pure, no I/O)
     event_rule_validator = providers.Factory(EventRuleValidator)
@@ -106,7 +108,8 @@ class Container(containers.DeclarativeContainer):
         event_repository=event_repository,
         event_rule_validator=event_rule_validator,
         event_schema_mapper=event_schema_mapper,
-        event_layout_cache=event_layout_cache
+        seat_cache=event_layout_cache,
+        event_list_cache=event_list_cache,
     )
 
     event_layout_service = providers.Factory(

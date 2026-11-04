@@ -10,13 +10,14 @@ any single aggregate instance.
 """
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import assert_never
 
-from sqlalchemy import cast, func, insert, literal
+from sqlalchemy import cast, func, insert, literal, and_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from app.aggregates.event import EventAggregate
-from app.enums import SeatStatus
+from app.enums import SeatStatus, EventListMode
 from app.exceptions import (
     EVENT_NOT_FOUND_MSG,
     VENUE_NOT_FOUND_MSG,
@@ -120,10 +121,23 @@ class EventRepository:
     # ----------------------------------------------------------------------- #
     # Collection queries
     # ----------------------------------------------------------------------- #
-    async def get_events(self, pagination: PaginationParams) -> Page[Event]:
+    async def get_events(
+        self, pagination: PaginationParams, mode: EventListMode = EventListMode.ALL
+    ) -> Page[Event]:
         """One page of non-deleted events ordered by id, plus the total count."""
+        match mode:
+            case EventListMode.ALL:
+                criteria = Event.deleted_at == None
+            case EventListMode.SELLING:
+                criteria = and_(
+                    Event.is_active == True,
+                    Event.start_at > func.now(),
+                    Event.deleted_at == None,
+                )
+            case _:
+                assert_never(mode)
         async with self.session_factory() as session:
-            stmt = select(Event).where(Event.deleted_at == None).order_by(Event.id)
+            stmt = select(Event).where(criteria).order_by(Event.id)
             return await paginate(session, stmt, pagination, Event)
 
     # ----------------------------------------------------------------------- #
