@@ -9,7 +9,6 @@ Boundaries:
     whether a charge is a network call, a mock, or a queue
 """
 import logging
-from datetime import datetime
 from typing import Protocol
 
 from redis import RedisError
@@ -18,7 +17,6 @@ from redis import RedisError
 from app.aggregates.order import OrderAggregate
 from app.cache.event_layout import EventLayoutCache
 from app.exceptions import ORDER_NOT_DELETABLE_MSG, OrderNotDeletableError
-from app.models import Order
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.order import OrderRepository
 from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal
@@ -37,8 +35,6 @@ from app.services.validators.order import OrderValidator
 
 logger = logging.getLogger(__name__)
 
-# The only failure that leaves seats locked in Redis with no order in Postgres
-# to find them by, so this line is the only record of which seats are stuck.
 SEATS_STILL_LOCKED_MSG = (
     "Seats are still locked in Redis for event %s - (zone, serial) %s. No "
     "order exists for these seats, so nobody can buy them until the cleanup "
@@ -47,30 +43,9 @@ SEATS_STILL_LOCKED_MSG = (
 
 
 class PaymentGateway(Protocol):
-    """The payment provider, as this service needs it.
-
-    A Protocol rather than a base class: the real provider, the sandbox and the
-    test double have nothing in common but this call, and nothing in this
-    module should depend on which one is wired in.
-    """
-
     async def charge(self, order_id: int, amount: int, payload: OrderPay) -> str:
-        """Charges the customer and returns the provider's transaction id.
-
-        Raises on a declined or failed charge. Must be idempotent per order_id
-        if the provider supports it - execute_payment guards against concurrent
-        double-charging with a row lock, but not against a retry after a
-        timeout where the first call may still have gone through.
-        """
+        """Returns the provider's transaction id; raises on a failed charge."""
         ...
-
-class OrderScheduler:
-    """Runs check_order_expiration for an order once its deadline passes."""
-
-    @staticmethod
-    async def schedule_order_expiration_task(order_id: int, deadline: datetime) -> None:
-        await OrderExpirationQueue.schedule(order_id=order_id, schedule_time=deadline)
-
 
 class UnimplementedPaymentGateway:
     async def charge(self, order_id: int, amount: int, payload: OrderPay) -> str:
@@ -128,11 +103,6 @@ class OrderService:
     async def _undo_seat_lock(
         self, event_seats_pricing: EventSeatsPricingInternal
     ) -> None:
-        """Unlocks seats whose order was never created.
-
-        A Redis outage is logged and swallowed - it must not replace the error
-        that caused it. Anything else is a defect of ours and surfaces.
-        """
         event_id = event_seats_pricing.event_id
         seats = [
             SeatPositionInternal(
@@ -176,7 +146,6 @@ class OrderService:
                 order_data = await self._release_and_soft_delete(
                     order_aggr, OrderDelete(reason="RESERVATION EXPIRED WITHOUT PAYMENT")
                 )
-
         if order_data is not None:
             await self._release_cached_seats(order_data)
 
@@ -220,6 +189,7 @@ class OrderService:
         try:
             transaction_id = await self._payment_gateway.charge(order_id, amount, payload)
         except Exception:
+            # TODO: timeout 不代表扣款失敗，直接標 FAILED 會讓客人能再付一次而被重複扣款
             logger.exception("Charge failed for order %s; releasing the claim", order_id)
             async with self._repository.load_for_update(order_id) as order_aggr:
                 await order_aggr.mark_as_payment_fail()
