@@ -125,7 +125,7 @@ class FakeAggregate:
 
     async def zone_seats(self, event_zone_id: int, pagination) -> Page:
         self.calls.append("zone_seats")
-        return Page(items=[], total=0, limit=pagination.limit, offset=pagination.offset)
+        return Page(items=[], total=0, page=pagination.page, page_size=pagination.page_size)
 
     async def update_profile(self, payload) -> None:
         self.calls.append("update_profile")

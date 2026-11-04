@@ -155,7 +155,7 @@ async def test_failed_use_case_rolls_back_explicitly(
 
     assert calls, "load_for_update swallowed the failure without rolling back"
 
-    fresh = (await repo.get_events(PaginationParams(limit=10, offset=0))).items
+    fresh = (await repo.get_events(PaginationParams(page=1, page_size=10))).items
     assert [e.name for e in fresh] == ["World Tour 2026"]
 
 

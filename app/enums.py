@@ -58,3 +58,10 @@ class RedisSeatLockFailure(enum.StrEnum):
     """lock_seats.lua 回報的失敗原因。值必須與該腳本裡的字面值一致。"""
     UNEXIST = "SEAT_UNEXIST_ERROR" # 座位不在版面上
     OCCUPIED = "SEAT_OCCUPIED_ERROR" # 座位已被佔走
+
+
+class PageSize(enum.IntEnum):
+    """A closed set so every list page can be pre-cached per size."""
+    SMALL = 10
+    MEDIUM = 20
+    LARGE = 50

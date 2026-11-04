@@ -23,11 +23,11 @@ async def paginate(
     total = await session.scalar(
         select(func.count()).select_from(stmt.order_by(None).subquery())
     )
-    windowed = stmt.limit(pagination.limit).offset(pagination.offset)
+    windowed = stmt.limit(pagination.page_size).offset(pagination.offset)
     items = list((await session.execute(windowed)).scalars().all())
     return Page[item_type](
         items=items,
         total=total or 0,
-        limit=pagination.limit,
-        offset=pagination.offset,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )

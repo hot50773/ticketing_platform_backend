@@ -149,27 +149,40 @@ async def test_venue_requires_description(async_client: AsyncClient):
 @pytest.mark.asyncio
 async def test_venue_list_pagination(async_client: AsyncClient):
     """GET /venues is paginated: items is windowed, total is the full count."""
-    for i in range(3):
+    names = [f"Venue {i:02d}" for i in range(12)]
+    for name in names:
         resp = await async_client.post(
             "/api/v1/venues",
-            json={"name": f"Venue {i}", "description": "d", "address": "a"},
+            json={"name": name, "description": "d", "address": "a"},
         )
         assert resp.status_code == 201
 
-    first = (await async_client.get("/api/v1/venues?limit=2&offset=0")).json()
-    assert first["total"] == 3
-    assert first["limit"] == 2 and first["offset"] == 0
-    assert [v["name"] for v in first["items"]] == ["Venue 0", "Venue 1"]
+    first = (await async_client.get("/api/v1/venues?page=1&page_size=10")).json()
+    assert first["total"] == 12
+    assert first["page"] == 1 and first["page_size"] == 10
+    assert "limit" not in first and "offset" not in first
 
-    second = (await async_client.get("/api/v1/venues?limit=2&offset=2")).json()
-    assert second["total"] == 3
-    assert [v["name"] for v in second["items"]] == ["Venue 2"]
+    second = (await async_client.get("/api/v1/venues?page=2&page_size=10")).json()
+    assert second["total"] == 12
+    assert [v["name"] for v in first["items"] + second["items"]] == names
+
+    past_end = (await async_client.get("/api/v1/venues?page=3&page_size=10")).json()
+    assert past_end["items"] == [] and past_end["total"] == 12
 
     default = (await async_client.get("/api/v1/venues")).json()
-    assert default["limit"] == 20 and default["offset"] == 0
+    assert default["page"] == 1 and default["page_size"] == 20
 
-    assert (await async_client.get("/api/v1/venues?limit=0")).status_code == 422
-    assert (await async_client.get("/api/v1/venues?limit=201")).status_code == 422
+    legacy = (await async_client.get("/api/v1/venues?limit=10&offset=10")).json()
+    assert legacy["page"] == 1 and legacy["page_size"] == 20
+    assert len(legacy["items"]) == 12
+
+    for page_size in (10, 20, 50):
+        resp = await async_client.get(f"/api/v1/venues?page_size={page_size}")
+        assert resp.status_code == 200 and resp.json()["page_size"] == page_size
+
+    for bad in ("page_size=15", "page_size=0", "page_size=51", "page_size=abc",
+                "page=0", "page=-1", "page=abc"):
+        assert (await async_client.get(f"/api/v1/venues?{bad}")).status_code == 422, bad
 
 
 @pytest.mark.asyncio
@@ -180,9 +193,13 @@ async def test_zone_and_seat_list_pagination(
     venue_id = seeded_venue_and_seats["venue_id"]
     zone_id = seeded_venue_and_seats["zone_a_id"]
 
-    zones = (await async_client.get(f"/api/v1/venues/{venue_id}/zones?limit=1")).json()
-    assert zones["total"] == 2 and len(zones["items"]) == 1
+    zones = (await async_client.get(f"/api/v1/venues/{venue_id}/zones?page_size=10")).json()
+    assert zones["total"] == 2 and len(zones["items"]) == 2
+    assert zones["page"] == 1 and zones["page_size"] == 10
 
-    seats = (await async_client.get(f"/api/v1/zones/{zone_id}/seats?limit=1&offset=1")).json()
-    assert seats["total"] == 2 and len(seats["items"]) == 1
-    assert seats["items"][0]["serial_number"] == 1
+    seats = (await async_client.get(f"/api/v1/zones/{zone_id}/seats?page_size=10")).json()
+    assert seats["total"] == 2
+    assert [s["serial_number"] for s in seats["items"]] == [0, 1]
+
+    past_end = (await async_client.get(f"/api/v1/zones/{zone_id}/seats?page=2&page_size=10")).json()
+    assert past_end["items"] == [] and past_end["total"] == 2
