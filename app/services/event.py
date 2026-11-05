@@ -20,9 +20,10 @@ TODO:
 - V event list 分流
 - V event list cache 刷新
 - V event list cache 讀取 by filter
-- 每 10 分鐘刷新 cache
+- V 讀取時超過 3 分鐘軟過期就背景刷新，5 分鐘 TTL 保底
 """
 import logging
+from typing import TYPE_CHECKING
 
 from redis import RedisError
 from sqlalchemy.exc import SQLAlchemyError
@@ -31,8 +32,9 @@ from app.cache.event_layout import EventLayoutCache
 from app.cache.event_list import EventListCache
 from app.constants import MAX_CACHE_PAGES
 from app.enums import EventListMode, PageSize
+from app.libs.clock.functional import now_utc
 from app.repositories.event import EventRepository
-from app.schemas import Page, PaginationParams
+from app.schemas import Page, PaginationParamsInternal, PaginationParams
 from app.schemas.event import (
     EventCreate,
     EventDetailResponse,
@@ -42,6 +44,8 @@ from app.schemas.event import (
 )
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
+if TYPE_CHECKING:
+    from fastapi import BackgroundTasks
 
 logger = logging.getLogger(__name__)
 
@@ -74,30 +78,56 @@ class EventService:
         paged_list = await self._repository.get_events(pagination)
         return self._mapper.to_event_page(paged_list)
 
-    async def list_selling_events(self, pagination: PaginationParams) -> Page[EventResponse]:
-        # get from cache first
-        if cache_result := (await self._event_list_cache.get_paged_events(pagination)):
-            return cache_result.data
+    async def list_selling_events(
+        self, pagination: PaginationParams, background_tasks: "BackgroundTasks"
+    ) -> Page[EventResponse]:
+        """A stale page is still served; the refresh it triggers runs after the response."""
+        cached = None
+        if pagination.page <= MAX_CACHE_PAGES:
+            cached = await self._event_list_cache.get_paged_events(pagination)
+            if cached is None or cached.expired_at <= now_utc():
+                background_tasks.add_task(self.rebuild_selling_events_cache)
 
-        logger.info("list_selling_events cache miss: %s", pagination.model_dump())
-        return await self._list_selling_events(pagination)
+        if cached:
+            result = cached.data
+        else:
+            logger.info("list_selling_events cache miss: %s", pagination.model_dump())
+            result = await self._list_selling_events(pagination)
+        return result
 
-    async def _list_selling_events(self, pagination: PaginationParams) -> Page[EventResponse]:
+    async def _list_selling_events(self, pagination: PaginationParamsInternal) -> Page[EventResponse]:
         paged_list = await self._repository.get_events(pagination, EventListMode.SELLING)
         return self._mapper.to_event_page(paged_list)
 
-    async def _reset_event_list_cache(self, silence: bool = True) -> None:
+    # TODO: 重建失敗時例外會從背景 task 拋出；改成 _rebuild 回傳成功與否、失敗不放鎖，並由 cache 吞掉鎖的 RedisError
+    async def rebuild_selling_events_cache(self) -> None:
+        if await self._event_list_cache.acquire_refresh_lock():
+            await self._rebuild_selling_events_cache()
+            await self._event_list_cache.release_refresh_lock()
+
+    async def _rebuild_selling_events_cache(self, silence: bool = False) -> None:
         try:
+            n = MAX_CACHE_PAGES * max(PageSize)
+            first_n_events = await self._list_selling_events(
+                PaginationParamsInternal(page=1, page_size=n)
+            )
             pages: list[Page[EventResponse]] = []
             for size in PageSize:
                 for page in range(1, MAX_CACHE_PAGES + 1):
-                    pagination = PaginationParams(page=page, page_size=size)
-                    pages.append(await self._list_selling_events(pagination))
-
+                    offset = PaginationParams(page=page, page_size=size).offset
+                    sliced_items = first_n_events.items[offset : offset + size]
+                    pages.append(
+                        Page[EventResponse](
+                            items=sliced_items,
+                            total=first_n_events.total,
+                            page=page,
+                            page_size=size,
+                        )
+                    )
             await self._event_list_cache.refresh_all(pages)
         # TODO: repository 應把 DB 錯誤包成 app/exceptions.py 的自訂例外，service 就不必 import sqlalchemy
         except (RedisError, SQLAlchemyError) as e:
-            logger.exception("Failed to reset event list cache")
+            logger.exception("Failed to refresh event list cache")
             if not silence:
                 raise e
 
@@ -132,15 +162,11 @@ class EventService:
             await event_aggr.publish()
             response = self._mapper.to_event(event_aggr.event)
         # TODO: 改成 event driven
-        await self._reset_event_list_cache()
+        await self._rebuild_selling_events_cache(silence=True)
         return response
 
     async def unpublish_event(self, event_id: int) -> EventResponse:
-        """The cache should be cleared *after* the transaction commits, the mirror image
-        of publish_event. Dropping a still-live event's bitmap would make every
-        seat read as non-existent, so it must not happen until the event is
-        certainly off sale; a bitmap left behind by a failed clear is inert.
-        """
+        """The cache should be cleared *after* the transaction commits"""
         async with self._repository.load_for_update(event_id) as event_aggr:
             self._validator.validate_no_active_order(await event_aggr.order_stats())
             zone_ids = await event_aggr.zone_ids()
@@ -150,7 +176,7 @@ class EventService:
         # TODO: 這個可以拆分成 method
         # TODO: 改成 event driven
         await self._seat_cache.clear_seat_layouts(event_id, zone_ids)
-        await self._reset_event_list_cache()
+        await self._rebuild_selling_events_cache(silence=True)
         return response
 
     async def delete_event(self, event_id: int) -> None:
@@ -166,4 +192,4 @@ class EventService:
         # TODO: 這個可以拆分成 method
         # TODO: 改成 event driven
         await self._seat_cache.clear_seat_layouts(event_id, zone_ids)
-        await self._reset_event_list_cache()
+        await self._rebuild_selling_events_cache(silence=True)

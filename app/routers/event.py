@@ -6,7 +6,7 @@ try/except boilerplate.
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from dependency_injector.wiring import inject, Provide
 
 from app.containers import Container
@@ -57,10 +57,11 @@ async def list_all_events(
 @inject
 async def list_selling_events(
     pagination: Annotated[PaginationParams, Query()],
+    background_tasks: BackgroundTasks,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Lists selling events, one page at a time."""
-    return await event_service.list_selling_events(pagination)
+    return await event_service.list_selling_events(pagination, background_tasks)
 
 
 @router.get("/{event_id}", response_model=EventDetailResponse, status_code=status.HTTP_200_OK)

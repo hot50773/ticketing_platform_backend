@@ -293,3 +293,5 @@ class EventSeatSyncCountsInternal(SQLModel):
 
 class EventListCacheFieldInternal(SQLModel):
     data: Page[EventResponse]
+    # Soft expiry: past it the page is still served, but a refresh is due
+    expired_at: datetime

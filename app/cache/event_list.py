@@ -1,8 +1,11 @@
 import logging
+from datetime import timedelta
+from uuid import uuid4
 
 from redis import RedisError
 
 from app.db.redis import RedisClient
+from app.libs.clock.functional import now_utc
 from app.schemas import Page, PaginationParams
 from app.schemas.event import EventListCacheFieldInternal, EventResponse
 
@@ -14,8 +17,11 @@ class EventListCache:
 
     EVENT_LIST_KEY = "event:list:selling" # 活動列表
     TEMP_EVENT_LIST_KEY = "event:list:selling:temp"
+    REFRESH_LOCK_KEY = "event:list:selling:refresh_lock"
     FIELD_KEY = "page_{page}:size_{size}"
-    EXPIRE_SECONDS = 60 * 60 * 24 * 7 # 7 days
+    EXPIRE_SECONDS = 60 * 5
+    SOFT_EXPIRE_SECONDS = 60 * 3
+    LOCK_SECONDS = 10
 
     def __init__(self, redis_client: RedisClient):
         self._redis_client = redis_client
@@ -25,20 +31,27 @@ class EventListCache:
         return cls.FIELD_KEY.format(size=page_size, page=page)
 
     async def refresh_all(self, pages: list[Page[EventResponse]]):
-        temp_key = self.TEMP_EVENT_LIST_KEY
+        # One temp key per rebuild: concurrent rebuilds sharing one would RENAME it away from each other
+        temp_key = f"{self.TEMP_EVENT_LIST_KEY}:{uuid4().hex}"
         permanent_key = self.EVENT_LIST_KEY
+        expired_at = now_utc() + timedelta(seconds=self.SOFT_EXPIRE_SECONDS)
 
-        async with self._redis_client.pipeline() as pipe:
+        async with self._redis_client.pipeline(transaction=True) as pipe:
             for page in pages:
                 pipe.hset(
                     name=temp_key,
                     key=self.generate_field_name(page.page, page.page_size),
-                    value=EventListCacheFieldInternal(data=page).model_dump_json(),
+                    value=EventListCacheFieldInternal(data=page, expired_at=expired_at).model_dump_json(),
                 )
+            pipe.rename(temp_key, permanent_key)
+            pipe.expire(permanent_key, self.EXPIRE_SECONDS)
             await pipe.execute()
 
-        await self._redis_client.rename(temp_key, permanent_key)
-        await self._redis_client.expire(permanent_key, self.EXPIRE_SECONDS)
+    async def acquire_refresh_lock(self) -> bool:
+        return bool(await self._redis_client.set(self.REFRESH_LOCK_KEY, 1, nx=True, ex=self.LOCK_SECONDS))
+
+    async def release_refresh_lock(self) -> None:
+        await self._redis_client.delete(self.REFRESH_LOCK_KEY)
 
     async def delete_all(self) -> None:
         try:

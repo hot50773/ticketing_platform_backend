@@ -16,6 +16,7 @@ from app.enums import OrderStatus, PaymentStatus, SeatStatus
 from app.schemas.event import (
     EventLayoutInternal,
     EventLayoutSummaryInternal,
+    EventListCacheFieldInternal,
     EventOrderStatsInternal,
     EventSeatInternal,
     EventSeatSyncCountsInternal,
@@ -37,9 +38,9 @@ from app.schemas.order import (
 START = now_utc() + timedelta(days=30)
 
 
-def an_event(is_active: bool = False) -> Event:
+def an_event(is_active: bool = False, event_id: int = 1) -> Event:
     return Event(
-        id=1,
+        id=event_id,
         name="World Tour",
         description="d",
         start_at=START,
@@ -169,8 +170,13 @@ class FakeEventRepository:
         order_count: int = 0,
         occupied: int = 0,
         zone_price: int | None = 1500,
+        selling_total: int = 0,
+        list_error: Exception | None = None,
     ):
         self.calls: list[str] = []
+        self.list_reads: list = []
+        self._selling_total = selling_total
+        self._list_error = list_error
         self.aggregate = FakeAggregate(
             self.calls, an_event(is_active), order_count, occupied, zone_price
         )
@@ -191,22 +197,51 @@ class FakeEventRepository:
         yield self.aggregate
 
     async def get_events(self, pagination, mode) -> Page:
-        """Not recorded: the list refresh reads once per cached page, which would
-        drown the call order the tests assert on."""
-        return Page(items=[], total=0, page=pagination.page, page_size=pagination.page_size)
+        """Events 1..selling_total are on sale, windowed like the real LIMIT/OFFSET."""
+        self.list_reads.append(pagination)
+        if self._list_error:
+            raise self._list_error
+        ids = range(1, self._selling_total + 1)[pagination.offset:pagination.offset + pagination.page_size]
+        return Page(
+            items=[an_event(is_active=True, event_id=i) for i in ids],
+            total=self._selling_total, page=pagination.page, page_size=pagination.page_size,
+        )
 
 
 class FakeEventListCache:
-    def __init__(self, calls: list[str]):
-        self.calls = calls
-        self.refreshed: list[Page] = []
+    """`entry` is what every cached page read returns; None means a miss."""
 
-    async def get_paged_events(self, pagination) -> None:
-        return None
+    def __init__(
+        self,
+        calls: list[str],
+        entry: EventListCacheFieldInternal | None = None,
+        lock_free: bool = True,
+        refresh_error: Exception | None = None,
+    ):
+        self.calls = calls
+        self._entry = entry
+        self._lock_free = lock_free
+        self._refresh_error = refresh_error
+        self.refreshed: list[Page] = []
+        self.lock_held = False
+
+    async def get_paged_events(self, pagination) -> EventListCacheFieldInternal | None:
+        return self._entry
 
     async def refresh_all(self, pages: list[Page]) -> None:
         self.calls.append("refresh_all")
+        if self._refresh_error:
+            raise self._refresh_error
         self.refreshed = pages
+
+    async def acquire_refresh_lock(self) -> bool:
+        self.calls.append("acquire_refresh_lock")
+        self.lock_held = self._lock_free
+        return self._lock_free
+
+    async def release_refresh_lock(self) -> None:
+        self.calls.append("release_refresh_lock")
+        self.lock_held = False
 
 
 class FakeEventLayoutCache:
