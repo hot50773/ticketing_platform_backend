@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
-from app.schemas import Page, PaginationParams
+from app.schemas import Page, PaginationParamsInternal
 
 T = TypeVar("T")
 
@@ -13,7 +13,7 @@ T = TypeVar("T")
 async def paginate(
     session: AsyncSession,
     stmt: Select,
-    pagination: PaginationParams,
+    pagination: PaginationParamsInternal,
     item_type: type[T],
 ) -> Page[T]:
     """Runs `stmt` twice: as COUNT(*) for the total, then windowed for the rows.

@@ -25,7 +25,7 @@ from app.exceptions import (
 )
 from app.models import Event, EventSeat, EventZone, Seat, Venue, Zone
 from app.repositories._pagination import paginate
-from app.schemas import Page, PaginationParams
+from app.schemas import Page, PaginationParamsInternal
 from app.schemas.event import EventCreate
 
 
@@ -122,7 +122,7 @@ class EventRepository:
     # Collection queries
     # ----------------------------------------------------------------------- #
     async def get_events(
-        self, pagination: PaginationParams, mode: EventListMode = EventListMode.ALL
+        self, pagination: PaginationParamsInternal, mode: EventListMode = EventListMode.ALL
     ) -> Page[Event]:
         """One page of non-deleted events ordered by id, plus the total count."""
         match mode:

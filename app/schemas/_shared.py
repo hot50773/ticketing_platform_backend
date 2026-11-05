@@ -7,6 +7,7 @@ from pydantic import AfterValidator, BaseModel, Field
 from app.constants import DEFAULT_PAGE_SIZE
 from app.enums import PageSize
 
+T = TypeVar("T")
 
 def _to_utc(value: datetime) -> datetime:
     """Normalises any incoming datetime to timezone-aware UTC.
@@ -24,21 +25,23 @@ def _to_utc(value: datetime) -> datetime:
 UtcDatetime = Annotated[datetime, AfterValidator(_to_utc)]
 
 
-class PaginationParams(BaseModel):
-    """Query params shared by every list endpoint.
-
-    Declare as `Annotated[PaginationParams, Query()]` so FastAPI flattens it
-    into `?page=&page_size=` instead of expecting a body.
-    """
+class PaginationParamsInternal(BaseModel):
+    """What repositories take, so internal callers are not bound to the API's page sizes."""
     page: int = Field(default=1, ge=1)
-    page_size: PageSize = Field(default=DEFAULT_PAGE_SIZE)
+    page_size: int = Field(ge=1)
 
     @property
     def offset(self) -> int:
         return (self.page - 1) * self.page_size
 
 
-T = TypeVar("T")
+class PaginationParams(PaginationParamsInternal):
+    """Query params shared by every list endpoint.
+
+    Declare as `Annotated[PaginationParams, Query()]` so FastAPI flattens it
+    into `?page=&page_size=` instead of expecting a body.
+    """
+    page_size: PageSize = Field(default=DEFAULT_PAGE_SIZE)
 
 
 class Page(BaseModel, Generic[T]):
