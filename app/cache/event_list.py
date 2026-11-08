@@ -19,8 +19,8 @@ class EventListCache:
     TEMP_EVENT_LIST_KEY = "event:list:selling:temp"
     REFRESH_LOCK_KEY = "event:list:selling:refresh_lock"
     FIELD_KEY = "page_{page}:size_{size}"
-    EXPIRE_SECONDS = 60 * 5
-    SOFT_EXPIRE_SECONDS = 60 * 3
+    EXPIRE_SECONDS = 60 * 10
+    SOFT_EXPIRE_SECONDS = 60 * 5
     LOCK_SECONDS = 10
 
     def __init__(self, redis_client: RedisClient):

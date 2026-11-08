@@ -20,7 +20,7 @@ TODO:
 - V event list 分流
 - V event list cache 刷新
 - V event list cache 讀取 by filter
-- V 讀取時超過 3 分鐘軟過期就背景刷新，5 分鐘 TTL 保底
+- V 讀取時超過 5 分鐘軟過期就背景刷新，10 分鐘 TTL 保底
 """
 import logging
 from typing import TYPE_CHECKING

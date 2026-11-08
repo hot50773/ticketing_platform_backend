@@ -132,7 +132,7 @@ async def test_rebuild_beyond_five_pages_keeps_the_full_total(
 # --------------------------------------------------------------------------- #
 # Cache storage
 # --------------------------------------------------------------------------- #
-async def test_refresh_sets_a_five_minute_ttl_and_a_three_minute_soft_expiry(
+async def test_refresh_sets_a_ten_minute_ttl_and_a_five_minute_soft_expiry(
     container: Container, seeded_venue_and_seats: dict
 ):
     await seed_events(container, seeded_venue_and_seats["venue_id"], selling=1)
@@ -141,9 +141,9 @@ async def test_refresh_sets_a_five_minute_ttl_and_a_three_minute_soft_expiry(
     await container.event_service()._rebuild_selling_events_cache()
 
     ttl = await container.redis_client().ttl(EventListCache.EVENT_LIST_KEY)
-    assert 290 < ttl <= 300
+    assert 590 < ttl <= 600
     cached = await container.event_list_cache().get_paged_events(PaginationParams())
-    assert before + timedelta(seconds=179) < cached.expired_at <= now_utc() + timedelta(seconds=180)
+    assert before + timedelta(seconds=299) < cached.expired_at <= now_utc() + timedelta(seconds=300)
 
 
 async def test_concurrent_rebuilds_do_not_trample_each_other(
