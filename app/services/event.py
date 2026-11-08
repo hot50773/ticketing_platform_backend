@@ -25,9 +25,6 @@ TODO:
 import logging
 from typing import TYPE_CHECKING
 
-from redis import RedisError
-from sqlalchemy.exc import SQLAlchemyError
-
 from app.cache.event_layout import EventLayoutCache
 from app.cache.event_list import EventListCache
 from app.constants import MAX_CACHE_PAGES
@@ -99,37 +96,31 @@ class EventService:
         paged_list = await self._repository.get_events(pagination, EventListMode.SELLING)
         return self._mapper.to_event_page(paged_list)
 
-    # TODO: 重建失敗時例外會從背景 task 拋出；改成 _rebuild 回傳成功與否、失敗不放鎖，並由 cache 吞掉鎖的 RedisError
     async def rebuild_selling_events_cache(self) -> None:
+        """A failed rebuild skips the release, so the lock doubles as a backoff."""
         if await self._event_list_cache.acquire_refresh_lock():
             await self._rebuild_selling_events_cache()
             await self._event_list_cache.release_refresh_lock()
 
-    async def _rebuild_selling_events_cache(self, silence: bool = False) -> None:
-        try:
-            n = MAX_CACHE_PAGES * max(PageSize)
-            first_n_events = await self._list_selling_events(
-                PaginationParamsInternal(page=1, page_size=n)
-            )
-            pages: list[Page[EventResponse]] = []
-            for size in PageSize:
-                for page in range(1, MAX_CACHE_PAGES + 1):
-                    offset = PaginationParams(page=page, page_size=size).offset
-                    sliced_items = first_n_events.items[offset : offset + size]
-                    pages.append(
-                        Page[EventResponse](
-                            items=sliced_items,
-                            total=first_n_events.total,
-                            page=page,
-                            page_size=size,
-                        )
+    async def _rebuild_selling_events_cache(self) -> None:
+        n = MAX_CACHE_PAGES * max(PageSize)
+        first_n_events = await self._list_selling_events(
+            PaginationParamsInternal(page=1, page_size=n)
+        )
+        pages: list[Page[EventResponse]] = []
+        for size in PageSize:
+            for page in range(1, MAX_CACHE_PAGES + 1):
+                offset = PaginationParams(page=page, page_size=size).offset
+                sliced_items = first_n_events.items[offset : offset + size]
+                pages.append(
+                    Page[EventResponse](
+                        items=sliced_items,
+                        total=first_n_events.total,
+                        page=page,
+                        page_size=size,
                     )
-            await self._event_list_cache.refresh_all(pages)
-        # TODO: repository 應把 DB 錯誤包成 app/exceptions.py 的自訂例外，service 就不必 import sqlalchemy
-        except (RedisError, SQLAlchemyError) as e:
-            logger.exception("Failed to refresh event list cache")
-            if not silence:
-                raise e
+                )
+        await self._event_list_cache.refresh_all(pages)
 
     async def get_event(self, event_id: int) -> EventDetailResponse:
         """Returns an event with its zones (seat counts only, not the seats)."""
@@ -153,7 +144,7 @@ class EventService:
             await event_aggr.set_holding_time(payload)
             return self._mapper.to_event(event_aggr.event)
 
-    async def publish_event(self, event_id: int) -> EventResponse:
+    async def publish_event(self, event_id: int, background_tasks: "BackgroundTasks") -> EventResponse:
         async with self._repository.load_for_update(event_id) as event_aggr:
             event_layout = await event_aggr.event_layout()
             self._validator.validate_publishable(event_layout.zones)
@@ -162,10 +153,10 @@ class EventService:
             await event_aggr.publish()
             response = self._mapper.to_event(event_aggr.event)
         # TODO: 改成 event driven
-        await self._rebuild_selling_events_cache(silence=True)
+        background_tasks.add_task(self._rebuild_selling_events_cache)
         return response
 
-    async def unpublish_event(self, event_id: int) -> EventResponse:
+    async def unpublish_event(self, event_id: int, background_tasks: "BackgroundTasks") -> EventResponse:
         """The cache should be cleared *after* the transaction commits"""
         async with self._repository.load_for_update(event_id) as event_aggr:
             self._validator.validate_no_active_order(await event_aggr.order_stats())
@@ -176,10 +167,10 @@ class EventService:
         # TODO: 這個可以拆分成 method
         # TODO: 改成 event driven
         await self._seat_cache.clear_seat_layouts(event_id, zone_ids)
-        await self._rebuild_selling_events_cache(silence=True)
+        background_tasks.add_task(self._rebuild_selling_events_cache)
         return response
 
-    async def delete_event(self, event_id: int) -> None:
+    async def delete_event(self, event_id: int, background_tasks: "BackgroundTasks") -> None:
         """The bitmaps are cleared after the commit, as in unpublish_event.
 
         The delete hands back the zone ids it removed; querying for them
@@ -192,4 +183,4 @@ class EventService:
         # TODO: 這個可以拆分成 method
         # TODO: 改成 event driven
         await self._seat_cache.clear_seat_layouts(event_id, zone_ids)
-        await self._rebuild_selling_events_cache(silence=True)
+        background_tasks.add_task(self._rebuild_selling_events_cache)

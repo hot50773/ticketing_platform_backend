@@ -16,6 +16,7 @@ from app.services.event import EventService
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
 from tests.unit._fakes import (
+    FakeBackgroundTasks,
     FakeEventLayoutCache,
     FakeEventListCache,
     FakeEventRepository,
@@ -44,18 +45,6 @@ def a_cached_page(expires_in: timedelta) -> EventListCacheFieldInternal:
 
 FRESH = timedelta(seconds=30)
 STALE = -timedelta(seconds=1)
-
-
-class FakeBackgroundTasks:
-    def __init__(self):
-        self.added: list = []
-
-    def add_task(self, func, *args, **kwargs) -> None:
-        self.added.append((func, args, kwargs))
-
-    async def run(self) -> None:
-        for func, args, kwargs in self.added:
-            await func(*args, **kwargs)
 
 
 def ids_by_page(pages: list[Page]) -> dict[tuple[int, int], list[int]]:
@@ -175,8 +164,7 @@ async def test_page_beyond_the_cache_reads_the_db_without_refreshing():
     assert background.added == []
 
 
-@pytest.mark.xfail(strict=True, reason="TODO: 背景重建失敗時例外會往外拋，見 rebuild_selling_events_cache")
-async def test_failed_refresh_keeps_the_lock_as_a_backoff():
+async def test_failed_refresh_raises_but_keeps_the_lock_as_a_backoff():
     """Releasing it would let every following read retry against a dead Redis."""
     repo = FakeEventRepository(selling_total=5)
     cache = FakeEventListCache(
@@ -185,21 +173,22 @@ async def test_failed_refresh_keeps_the_lock_as_a_backoff():
     background = FakeBackgroundTasks()
 
     result = await a_service(repo, cache).list_selling_events(PaginationParams(), background)
-    await background.run()
+    with pytest.raises(RedisError):
+        await background.run()
 
     assert [item.id for item in result.items] == [7]
     assert repo.calls == ["acquire_refresh_lock", "refresh_all"]
     assert cache.lock_held
 
 
-@pytest.mark.xfail(strict=True, reason="TODO: 背景重建失敗時例外會往外拋，見 rebuild_selling_events_cache")
-async def test_failed_db_read_during_refresh_keeps_the_lock():
+async def test_failed_db_read_during_refresh_raises_but_keeps_the_lock():
     repo = FakeEventRepository(list_error=SQLAlchemyError("db down"))
     cache = FakeEventListCache(repo.calls, entry=a_cached_page(STALE))
     background = FakeBackgroundTasks()
 
     await a_service(repo, cache).list_selling_events(PaginationParams(), background)
-    await background.run()
+    with pytest.raises(SQLAlchemyError):
+        await background.run()
 
     assert repo.calls == ["acquire_refresh_lock"]
     assert cache.lock_held
@@ -213,17 +202,24 @@ async def test_publish_rebuilds_without_waiting_for_the_lock():
     repo = FakeEventRepository(selling_total=1)
     cache = FakeEventListCache(repo.calls, lock_free=False)
 
-    await a_service(repo, cache).publish_event(1)
+    background = FakeBackgroundTasks()
+
+    await a_service(repo, cache).publish_event(1, background)
+    await background.run()
 
     assert "acquire_refresh_lock" not in repo.calls
     assert ids_by_page(cache.refreshed)[(20, 1)] == [1]
 
 
-async def test_publish_succeeds_when_the_rebuild_fails():
+async def test_publish_succeeds_before_its_rebuild_fails():
+    """The rebuild runs after the response, so its error never reaches the admin."""
     repo = FakeEventRepository(selling_total=1)
     cache = FakeEventListCache(repo.calls, refresh_error=RedisError("down"))
+    background = FakeBackgroundTasks()
 
-    result = await a_service(repo, cache).publish_event(1)
+    result = await a_service(repo, cache).publish_event(1, background)
+    with pytest.raises(RedisError):
+        await background.run()
 
     assert result.id == 1
     assert "publish" in repo.calls

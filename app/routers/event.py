@@ -100,30 +100,33 @@ async def update_event_holding_time(
 @inject
 async def publish_event(
     event_id: int,
+    background_tasks: BackgroundTasks,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Puts the event on sale. Rejected while any zone is still unpriced."""
-    return await event_service.publish_event(event_id)
+    return await event_service.publish_event(event_id, background_tasks)
 
 
 @router.post("/{event_id}/unpublish", response_model=EventResponse, status_code=status.HTTP_200_OK)
 @inject
 async def unpublish_event(
     event_id: int,
+    background_tasks: BackgroundTasks,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Takes the event off sale. Rejected once any order exists."""
-    return await event_service.unpublish_event(event_id)
+    return await event_service.unpublish_event(event_id, background_tasks)
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
 async def delete_event(
     event_id: int,
+    background_tasks: BackgroundTasks,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Soft-deletes an event. Rejected when confirmed orders exist."""
-    await event_service.delete_event(event_id)
+    await event_service.delete_event(event_id, background_tasks)
 
 
 # --------------------------------------------------------------------------- #

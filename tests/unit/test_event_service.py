@@ -21,6 +21,7 @@ from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
 from tests.unit._fakes import (
     START,
+    FakeBackgroundTasks,
     FakeEventLayoutCache,
     FakeEventListCache,
     FakeEventRepository,
@@ -89,12 +90,14 @@ async def test_holding_time_update_checks_publication_before_the_clock():
 async def test_delete_reads_and_writes_in_the_same_transaction():
     """One entry point: the order count and the delete cannot drift apart."""
     repo = FakeEventRepository()
-    await a_service(repo).delete_event(1)
+    background = FakeBackgroundTasks()
+    await a_service(repo).delete_event(1, background)
 
     assert repo.calls == [
         "load_for_update", "order_stats", "soft_delete_cascade", "clear_seat_layouts",
-        "refresh_all",
     ]
+    await background.run()
+    assert repo.calls[-1] == "refresh_all"
 
 
 @pytest.mark.asyncio
@@ -102,7 +105,7 @@ async def test_delete_does_not_write_when_an_order_exists():
     repo = FakeEventRepository(order_count=1)
 
     with pytest.raises(ActiveOrdersExistError):
-        await a_service(repo).delete_event(1)
+        await a_service(repo).delete_event(1, FakeBackgroundTasks())
 
     assert "soft_delete_cascade" not in repo.calls
 
@@ -112,7 +115,7 @@ async def test_unpublish_checks_orders_inside_the_locked_transaction():
     repo = FakeEventRepository(is_active=True, order_count=1)
 
     with pytest.raises(ActiveOrdersExistError):
-        await a_service(repo).unpublish_event(1)
+        await a_service(repo).unpublish_event(1, FakeBackgroundTasks())
 
     assert repo.calls == ["load_for_update", "order_stats"]
 
@@ -121,11 +124,12 @@ async def test_unpublish_checks_orders_inside_the_locked_transaction():
 async def test_publish_checks_prices_not_orders():
     """The two flows share no precondition: publishing never counts orders."""
     repo = FakeEventRepository()
-    await a_service(repo).publish_event(1)
+    background = FakeBackgroundTasks()
+    await a_service(repo).publish_event(1, background)
 
-    assert repo.calls == [
-        "load_for_update", "event_layout", "init_event_layouts", "publish", "refresh_all",
-    ]
+    assert repo.calls == ["load_for_update", "event_layout", "init_event_layouts", "publish"]
+    await background.run()
+    assert repo.calls[-1] == "refresh_all"
 
 
 @pytest.mark.asyncio
@@ -134,7 +138,7 @@ async def test_publish_warms_the_bitmap_before_it_writes():
     live for a moment with no seats in Redis."""
     repo = FakeEventRepository()
     cache = FakeEventLayoutCache(repo.calls)
-    await a_service(repo, cache).publish_event(1)
+    await a_service(repo, cache).publish_event(1, FakeBackgroundTasks())
 
     assert repo.calls.index("init_event_layouts") < repo.calls.index("publish")
     assert [seat.serial_number for seat in cache.warmed[0].zones[0].seats] == [0, 1]
@@ -148,7 +152,7 @@ async def test_publish_does_not_write_when_the_cache_fails():
     cache = FakeEventLayoutCache(repo.calls, fail=True)
 
     with pytest.raises(RedisError):
-        await a_service(repo, cache).publish_event(1)
+        await a_service(repo, cache).publish_event(1, FakeBackgroundTasks())
 
     assert "publish" not in repo.calls
 
@@ -160,7 +164,7 @@ async def test_publish_does_not_warm_the_cache_for_an_unpriced_zone():
     repo = FakeEventRepository(zone_price=None)
 
     with pytest.raises(TicketPriceNotReadyError):
-        await a_service(repo).publish_event(1)
+        await a_service(repo).publish_event(1, FakeBackgroundTasks())
 
     assert repo.calls == ["load_for_update", "event_layout"]
 
@@ -170,12 +174,14 @@ async def test_unpublish_checks_orders_not_prices():
     """...and unpublishing never looks at prices, so an unpriced zone that was
     never published can still be taken off sale."""
     repo = FakeEventRepository(is_active=True)
-    await a_service(repo).unpublish_event(1)
+    background = FakeBackgroundTasks()
+    await a_service(repo).unpublish_event(1, background)
 
     assert repo.calls == [
         "load_for_update", "order_stats", "zone_ids", "unpublish", "clear_seat_layouts",
-        "refresh_all",
     ]
+    await background.run()
+    assert repo.calls[-1] == "refresh_all"
 
 
 @pytest.mark.asyncio
@@ -184,7 +190,7 @@ async def test_unpublish_clears_the_bitmap_only_after_it_writes():
     seat read as non-existent, so the delete waits until the event is off sale."""
     repo = FakeEventRepository(is_active=True)
     cache = FakeEventLayoutCache(repo.calls)
-    await a_service(repo, cache).unpublish_event(1)
+    await a_service(repo, cache).unpublish_event(1, FakeBackgroundTasks())
 
     assert repo.calls.index("unpublish") < repo.calls.index("clear_seat_layouts")
     assert cache.cleared == [(1, [10])]
@@ -194,7 +200,7 @@ async def test_unpublish_clears_the_bitmap_only_after_it_writes():
 async def test_delete_clears_the_bitmap_only_after_it_writes():
     repo = FakeEventRepository()
     cache = FakeEventLayoutCache(repo.calls)
-    await a_service(repo, cache).delete_event(1)
+    await a_service(repo, cache).delete_event(1, FakeBackgroundTasks())
 
     assert repo.calls.index("soft_delete_cascade") < repo.calls.index("clear_seat_layouts")
     assert cache.cleared == [(1, [10])]
@@ -206,7 +212,7 @@ async def test_blocked_unpublish_never_touches_the_cache():
     cache = FakeEventLayoutCache(repo.calls)
 
     with pytest.raises(ActiveOrdersExistError):
-        await a_service(repo, cache).unpublish_event(1)
+        await a_service(repo, cache).unpublish_event(1, FakeBackgroundTasks())
 
     assert cache.cleared == []
 

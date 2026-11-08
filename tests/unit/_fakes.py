@@ -208,6 +208,20 @@ class FakeEventRepository:
         )
 
 
+class FakeBackgroundTasks:
+    """Collects what FastAPI would run after the response; a test runs them itself."""
+
+    def __init__(self):
+        self.added: list = []
+
+    def add_task(self, func, *args, **kwargs) -> None:
+        self.added.append((func, args, kwargs))
+
+    async def run(self) -> None:
+        for func, args, kwargs in self.added:
+            await func(*args, **kwargs)
+
+
 class FakeEventListCache:
     """`entry` is what every cached page read returns; None means a miss."""
 
