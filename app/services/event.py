@@ -12,8 +12,11 @@ Boundaries:
   - the zone / seat layout lives in EventLayoutService, not here
   - seat bitmaps: publish_event warms them, unpublish_event and delete_event
     drop them again
-  - selling list cache: those three rebuild it after commit, best-effort, since
-    the event is already saved and the next rebuild repairs a stale list
+  - selling list cache: those three rebuild it in a background task after the
+    response; a failed rebuild is repaired at the next soft expiry
+  - detail cache: holds published events only, filled by the first read;
+    edits to a published event rebuild it in the background, unpublish_event
+    and delete_event drop it; EventLayoutService rebuilds it the same way
 
 event cache - 實作活動列表的快取，在大流量瘋狂搶票時，把讀取活動列表的流量擋下來，減輕資料庫負荷。
 TODO:
@@ -25,6 +28,7 @@ TODO:
 import logging
 from typing import TYPE_CHECKING
 
+from app.cache.event_detail import EventDetailCache
 from app.cache.event_layout import EventLayoutCache
 from app.cache.event_list import EventListCache
 from app.constants import MAX_CACHE_PAGES
@@ -54,6 +58,7 @@ class EventService:
         self,
         event_repository: EventRepository,
         event_list_cache: EventListCache,
+        event_detail_cache: EventDetailCache,
         seat_cache: EventLayoutCache,
         event_rule_validator: EventRuleValidator,
         event_schema_mapper: EventSchemaMapper,
@@ -63,6 +68,7 @@ class EventService:
         self._mapper = event_schema_mapper
         self._seat_cache = seat_cache
         self._event_list_cache = event_list_cache
+        self._event_detail_cache = event_detail_cache
 
     async def create_event(self, payload: EventCreate) -> EventDetailResponse:
         """The event is always created unpublished with every zone price unset."""
@@ -122,18 +128,42 @@ class EventService:
                 )
         await self._event_list_cache.refresh_all(pages)
 
-    async def get_event(self, event_id: int) -> EventDetailResponse:
+    async def get_event(self, event_id: int, background_tasks: "BackgroundTasks") -> EventDetailResponse:
         """Returns an event with its zones (seat counts only, not the seats)."""
+        cached = await self._event_detail_cache.get(event_id)
+
+        if cached:
+            if cached.expired_at <= now_utc():
+                background_tasks.add_task(self.rebuild_event_detail_cache, event_id)
+            result = cached.data
+        else:
+            result = await self._get_event(event_id)
+            if result.is_active:
+                background_tasks.add_task(self._event_detail_cache.set, result)
+        return result
+
+    async def _get_event(self, event_id: int) -> EventDetailResponse:
         async with self._repository.load(event_id) as event_aggr:
             return self._mapper.to_event_detail(await event_aggr.layout())
 
+    async def rebuild_event_detail_cache(self, event_id: int) -> None:
+        if await self._event_detail_cache.acquire_refresh_lock(event_id):
+            await self._rebuild_event_detail_cache(event_id)
+            await self._event_detail_cache.release_refresh_lock(event_id)
+
+    async def _rebuild_event_detail_cache(self, event_id: int) -> None:
+        await self._event_detail_cache.sync(await self._get_event(event_id))
+
     async def update_event_profile(
-        self, event_id: int, payload: EventProfileUpdate
+        self, event_id: int, payload: EventProfileUpdate, background_tasks: "BackgroundTasks"
     ) -> EventResponse:
         """Updates name / description. Allowed while the event is published."""
         async with self._repository.load_for_update(event_id) as event_aggr:
             await event_aggr.update_profile(payload)
-            return self._mapper.to_event(event_aggr.event)
+            response = self._mapper.to_event(event_aggr.event)
+        if response.is_active:
+            background_tasks.add_task(self._rebuild_event_detail_cache, event_id)
+        return response
 
     async def update_event_holding_time(
         self, event_id: int, payload: EventHoldingTimeUpdate
@@ -168,6 +198,7 @@ class EventService:
         # TODO: 改成 event driven
         await self._seat_cache.clear_seat_layouts(event_id, zone_ids)
         background_tasks.add_task(self._rebuild_selling_events_cache)
+        background_tasks.add_task(self._event_detail_cache.delete, event_id)
         return response
 
     async def delete_event(self, event_id: int, background_tasks: "BackgroundTasks") -> None:
@@ -184,3 +215,4 @@ class EventService:
         # TODO: 改成 event driven
         await self._seat_cache.clear_seat_layouts(event_id, zone_ids)
         background_tasks.add_task(self._rebuild_selling_events_cache)
+        background_tasks.add_task(self._event_detail_cache.delete, event_id)

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from redis import RedisError
 
+from app.exceptions import EntityNotFoundError
 from app.libs.clock.functional import now_utc
 from app.models import Event, EventZone, Order
 from app.schemas import Page
@@ -172,8 +173,10 @@ class FakeEventRepository:
         zone_price: int | None = 1500,
         selling_total: int = 0,
         list_error: Exception | None = None,
+        missing: bool = False,
     ):
         self.calls: list[str] = []
+        self._missing = missing
         self.list_reads: list = []
         self._selling_total = selling_total
         self._list_error = list_error
@@ -184,11 +187,15 @@ class FakeEventRepository:
     @asynccontextmanager
     async def load(self, event_id: int):
         self.calls.append("load")
+        if self._missing:
+            raise EntityNotFoundError(f"Event with id {event_id} not found")
         yield self.aggregate
 
     @asynccontextmanager
     async def load_for_update(self, event_id: int):
         self.calls.append("load_for_update")
+        if self._missing:
+            raise EntityNotFoundError(f"Event with id {event_id} not found")
         yield self.aggregate
 
     @asynccontextmanager
@@ -255,6 +262,53 @@ class FakeEventListCache:
 
     async def release_refresh_lock(self) -> None:
         self.calls.append("release_refresh_lock")
+        self.lock_held = False
+
+
+class FakeEventDetailCache:
+    """`entry` is what a read returns; None means a miss."""
+
+    def __init__(
+        self,
+        calls: list[str],
+        entry=None,
+        lock_free: bool = True,
+        set_error: Exception | None = None,
+    ):
+        self.calls = calls
+        self._entry = entry
+        self._lock_free = lock_free
+        self._set_error = set_error
+        self.stored: dict = {}
+        self.deleted: list[int] = []
+        self.lock_held = False
+
+    async def get(self, event_id: int):
+        return self._entry
+
+    async def set(self, detail) -> None:
+        self.calls.append("set_detail")
+        if self._set_error:
+            raise self._set_error
+        self.stored[detail.id] = detail
+
+    async def delete(self, event_id: int) -> None:
+        self.calls.append("delete_detail")
+        self.deleted.append(event_id)
+
+    async def sync(self, detail) -> None:
+        if detail.is_active:
+            await self.set(detail)
+        else:
+            await self.delete(detail.id)
+
+    async def acquire_refresh_lock(self, event_id: int) -> bool:
+        self.calls.append("acquire_detail_lock")
+        self.lock_held = self._lock_free
+        return self._lock_free
+
+    async def release_refresh_lock(self, event_id: int) -> None:
+        self.calls.append("release_detail_lock")
         self.lock_held = False
 
 

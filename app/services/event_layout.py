@@ -6,7 +6,9 @@ while its layout freezes. Both go through the same aggregate: zones and seats
 belong to the Event aggregate, so they share its transaction and its row lock.
 """
 import logging
+from typing import TYPE_CHECKING
 
+from app.cache.event_detail import EventDetailCache
 from app.repositories.event import EventRepository
 from app.schemas import Page, PaginationParams
 from app.schemas.event import (
@@ -19,6 +21,8 @@ from app.schemas.event import (
 )
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
+if TYPE_CHECKING:
+    from fastapi import BackgroundTasks
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +35,12 @@ class EventLayoutService:
         event_repository: EventRepository,
         event_rule_validator: EventRuleValidator,
         event_schema_mapper: EventSchemaMapper,
+        event_detail_cache: EventDetailCache,
     ):
         self._repository = event_repository
         self._validator = event_rule_validator
         self._mapper = event_schema_mapper
+        self._event_detail_cache = event_detail_cache
 
     async def create_event_zone(
         self, event_id: int, payload: EventZoneCreate
@@ -45,7 +51,11 @@ class EventLayoutService:
             return self._mapper.to_zone(created)
 
     async def update_event_zone_profile(
-        self, event_id: int, event_zone_id: int, payload: EventZoneProfileUpdate
+        self,
+        event_id: int,
+        event_zone_id: int,
+        payload: EventZoneProfileUpdate,
+        background_tasks: "BackgroundTasks",
     ) -> EventZoneResponse:
         """Updates a zone's name and ticket price.
 
@@ -54,7 +64,15 @@ class EventLayoutService:
         """
         async with self._repository.load_for_update(event_id) as event_aggr:
             updated = await event_aggr.update_zone_profile(event_zone_id, payload)
-            return self._mapper.to_zone(updated)
+            is_published = event_aggr.state.is_active
+        if is_published:
+            background_tasks.add_task(self._rebuild_event_detail_cache, event_id)
+        return self._mapper.to_zone(updated)
+
+    async def _rebuild_event_detail_cache(self, event_id: int) -> None:
+        async with self._repository.load(event_id) as event_aggr:
+            detail = self._mapper.to_event_detail(await event_aggr.layout())
+        await self._event_detail_cache.sync(detail)
 
     async def list_event_zone_seats(
         self, event_id: int, event_zone_id: int, pagination: PaginationParams

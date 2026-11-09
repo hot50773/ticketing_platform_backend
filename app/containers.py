@@ -3,6 +3,7 @@ import pkgutil
 
 from dependency_injector import containers, providers
 
+from app.cache.event_detail import EventDetailCache
 from app.cache.event_layout import EventLayoutCache
 from app.cache.event_list import EventListCache
 from app.db.postgres import Database
@@ -79,6 +80,7 @@ class Container(containers.DeclarativeContainer):
     # Cache
     event_layout_cache = providers.Factory(EventLayoutCache, redis_client=redis_client)
     event_list_cache = providers.Factory(EventListCache, redis_client=redis_client)
+    event_detail_cache = providers.Factory(EventDetailCache, redis_client=redis_client)
 
     # Domain rule validators (pure, no I/O)
     event_rule_validator = providers.Factory(EventRuleValidator)
@@ -110,13 +112,15 @@ class Container(containers.DeclarativeContainer):
         event_schema_mapper=event_schema_mapper,
         seat_cache=event_layout_cache,
         event_list_cache=event_list_cache,
+        event_detail_cache=event_detail_cache,
     )
 
     event_layout_service = providers.Factory(
         EventLayoutService,
         event_repository=event_repository,
         event_rule_validator=event_rule_validator,
-        event_schema_mapper=event_schema_mapper
+        event_schema_mapper=event_schema_mapper,
+        event_detail_cache=event_detail_cache,
     )
 
     # The payment provider is a placeholder that raises: binding a fake success

@@ -6,14 +6,21 @@ from app.schemas.event import EventSeatLayout, EventSeatLayoutUpdate, EventZoneC
 from app.services.event_layout import EventLayoutService
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
-from tests.unit._fakes import FakeEventRepository
+from tests.unit._fakes import (
+    FakeBackgroundTasks,
+    FakeEventDetailCache,
+    FakeEventRepository,
+)
 
 
-def a_service(repository: FakeEventRepository) -> EventLayoutService:
+def a_service(
+    repository: FakeEventRepository, detail_cache: FakeEventDetailCache | None = None
+) -> EventLayoutService:
     return EventLayoutService(
         event_repository=repository,
         event_rule_validator=EventRuleValidator(),
         event_schema_mapper=EventSchemaMapper(),
+        event_detail_cache=detail_cache or FakeEventDetailCache(repository.calls),
     )
 
 
@@ -68,7 +75,7 @@ async def test_published_event_cannot_gain_a_zone():
 async def test_zone_profile_edit_is_allowed_while_published():
     """name and price stay editable after the event goes live."""
     repo = FakeEventRepository(is_active=True)
-    result = await a_service(repo).update_event_zone_profile(1, 10, a_zone_payload())
+    result = await a_service(repo).update_event_zone_profile(1, 10, a_zone_payload(), FakeBackgroundTasks())
 
     assert repo.calls == ["load_for_update", "update_zone_profile"]
     assert result.price == 100
@@ -82,3 +89,42 @@ async def test_seat_listing_does_not_take_the_write_lock():
     await a_service(repo).list_event_zone_seats(1, 10, PaginationParams())
 
     assert repo.calls == ["load", "zone_seats"]
+
+
+# --------------------------------------------------------------------------- #
+# Event detail cache
+# --------------------------------------------------------------------------- #
+async def test_zone_profile_edit_of_a_published_event_rebuilds_the_detail_cache():
+    repo = FakeEventRepository(is_active=True)
+    cache = FakeEventDetailCache(repo.calls)
+    background = FakeBackgroundTasks()
+
+    await a_service(repo, cache).update_event_zone_profile(1, 10, a_zone_payload(), background)
+    assert "set_detail" not in repo.calls
+
+    repo.calls.clear()
+    await background.run()
+    assert repo.calls == ["load", "layout", "set_detail"]
+    assert cache.stored[1].zones[0].seat_count == 4
+
+
+async def test_zone_rebuild_drops_the_detail_if_the_event_was_unpublished_meanwhile():
+    repo = FakeEventRepository(is_active=True)
+    cache = FakeEventDetailCache(repo.calls)
+    background = FakeBackgroundTasks()
+
+    await a_service(repo, cache).update_event_zone_profile(1, 10, a_zone_payload(), background)
+    repo.aggregate.event.is_active = False
+    await background.run()
+
+    assert cache.deleted == [1]
+    assert "set_detail" not in repo.calls
+
+
+async def test_zone_profile_edit_of_an_unpublished_event_schedules_no_rebuild():
+    repo = FakeEventRepository(is_active=False)
+    background = FakeBackgroundTasks()
+
+    await a_service(repo).update_event_zone_profile(1, 10, a_zone_payload(), background)
+
+    assert background.added == []

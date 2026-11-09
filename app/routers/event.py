@@ -68,10 +68,11 @@ async def list_selling_events(
 @inject
 async def get_event(
     event_id: int,
+    background_tasks: BackgroundTasks,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Gets an event with its zones and seats."""
-    return await event_service.get_event(event_id)
+    return await event_service.get_event(event_id, background_tasks)
 
 
 @router.patch("/{event_id}/profile", response_model=EventResponse, status_code=status.HTTP_200_OK)
@@ -79,10 +80,11 @@ async def get_event(
 async def update_event_profile(
     event_id: int,
     payload: EventProfileUpdate,
+    background_tasks: BackgroundTasks,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Updates the event's name and description."""
-    return await event_service.update_event_profile(event_id, payload)
+    return await event_service.update_event_profile(event_id, payload, background_tasks)
 
 
 @router.patch("/{event_id}/holding_time", response_model=EventResponse, status_code=status.HTTP_200_OK)
@@ -157,10 +159,13 @@ async def update_event_zone_profile(
     event_id: int,
     event_zone_id: int,
     payload: EventZoneProfileUpdate,
+    background_tasks: BackgroundTasks,
     layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
 ):
     """Updates a zone's name and ticket price."""
-    return await layout_service.update_event_zone_profile(event_id, event_zone_id, payload)
+    return await layout_service.update_event_zone_profile(
+        event_id, event_zone_id, payload, background_tasks
+    )
 
 
 @router.get(

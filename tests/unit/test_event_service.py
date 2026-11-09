@@ -20,6 +20,7 @@ from app.services.event import EventService
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
 from tests.unit._fakes import (
+    FakeEventDetailCache,
     START,
     FakeBackgroundTasks,
     FakeEventLayoutCache,
@@ -39,6 +40,7 @@ def a_service(
         event_schema_mapper=EventSchemaMapper(),
         seat_cache=cache or FakeEventLayoutCache(repository.calls),
         event_list_cache=FakeEventListCache(repository.calls),
+        event_detail_cache=FakeEventDetailCache(repository.calls),
     )
 
 
@@ -97,7 +99,7 @@ async def test_delete_reads_and_writes_in_the_same_transaction():
         "load_for_update", "order_stats", "soft_delete_cascade", "clear_seat_layouts",
     ]
     await background.run()
-    assert repo.calls[-1] == "refresh_all"
+    assert "refresh_all" in repo.calls
 
 
 @pytest.mark.asyncio
@@ -129,7 +131,7 @@ async def test_publish_checks_prices_not_orders():
 
     assert repo.calls == ["load_for_update", "event_layout", "init_event_layouts", "publish"]
     await background.run()
-    assert repo.calls[-1] == "refresh_all"
+    assert "refresh_all" in repo.calls
 
 
 @pytest.mark.asyncio
@@ -181,7 +183,7 @@ async def test_unpublish_checks_orders_not_prices():
         "load_for_update", "order_stats", "zone_ids", "unpublish", "clear_seat_layouts",
     ]
     await background.run()
-    assert repo.calls[-1] == "refresh_all"
+    assert "refresh_all" in repo.calls
 
 
 @pytest.mark.asyncio
@@ -220,6 +222,6 @@ async def test_blocked_unpublish_never_touches_the_cache():
 @pytest.mark.asyncio
 async def test_reads_do_not_take_the_write_lock():
     repo = FakeEventRepository()
-    await a_service(repo).get_event(1)
+    await a_service(repo).get_event(1, FakeBackgroundTasks())
 
     assert repo.calls == ["load", "layout"]

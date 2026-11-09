@@ -295,3 +295,9 @@ class EventListCacheFieldInternal(SQLModel):
     data: Page[EventResponse]
     # Soft expiry: past it the page is still served, but a refresh is due
     expired_at: datetime
+
+
+class EventDetailCacheInternal(SQLModel):
+    data: EventDetailResponse
+    # Soft expiry: past it the detail is still served, but a refresh is due
+    expired_at: datetime
