@@ -1,3 +1,5 @@
+import asyncio
+
 from app.enums import ManagerRole
 from app.exceptions import PermissionDeniedError
 from app.libs.security import PasswordHasher
@@ -25,7 +27,7 @@ class ManagerService:
             ManagerCreateInternal(
                 name=payload.name,
                 email=payload.email,
-                hashed_password=self._hasher.hash(payload.password),
+                hashed_password=await asyncio.to_thread(self._hasher.hash, payload.password),
                 role=role,
             )
         )

@@ -3,6 +3,7 @@
 Customers and managers live in separate tables, so one email can be both.
 Customers have no password: Google sign-in is their only way in.
 """
+import asyncio
 from typing import Callable, Protocol
 
 from app.cache.login_attempts import LoginAttemptLimiter
@@ -64,8 +65,9 @@ class AuthService:
             raise TooManyLoginAttemptsError("Too many failed log-ins, try again later")
 
         manager = await self._managers.get_by_email(email)
-        valid, updated_hash = self._hasher.verify_and_update(
-            password, manager.hashed_password if manager else None
+        # argon2 is ~50ms of CPU; off the event loop so other requests keep moving
+        valid, updated_hash = await asyncio.to_thread(
+            self._hasher.verify_and_update, password, manager.hashed_password if manager else None
         )
         if not (valid and manager.is_active):
             await self._limiter.record_failure(client_ip, email)
