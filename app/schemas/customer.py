@@ -1,12 +1,9 @@
-from datetime import datetime
-
 from sqlmodel import SQLModel
 
+from ._shared import _TableMetaMixin
 
-class CustomerResponse(SQLModel):
-    id: int
-    created_at: datetime
-    updated_at: datetime
+
+class CustomerResponse(SQLModel, _TableMetaMixin):
     name: str
     email: str
 

@@ -32,7 +32,7 @@ async def test_manager_is_stored_with_its_role_and_never_the_plain_password():
     stored = repo.rows[response.id]
     assert response.role == ManagerRole.MANAGER
     assert stored.hashed_password != "correct-horse"
-    assert PasswordHasher().verify("correct-horse", stored.hashed_password)
+    assert PasswordHasher().verify_and_update("correct-horse", stored.hashed_password)[0]
 
 
 async def test_email_is_stored_lower_cased_so_case_cannot_open_a_second_account():

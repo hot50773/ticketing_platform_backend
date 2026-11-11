@@ -1,4 +1,5 @@
 """Accounts and permissions end to end: Google sign-in, manager log-in, admin, route guards."""
+import asyncio
 from datetime import timedelta
 
 from httpx import AsyncClient
@@ -10,8 +11,10 @@ from app.enums import ManagerRole
 from app.libs.clock.functional import now_utc
 from app.models import Order
 from app.schemas.auth import GoogleIdentityInternal
+from app.schemas.customer import CustomerCreateInternal
 from app.schemas.manager import ManagerCreate
 from app.scripts.create_admin import create_admin
+from tests.e2e.conftest import bearer_header
 from tests.unit._fakes import FakeGoogleIdTokenVerifier
 
 API = "/api/v1"
@@ -25,7 +28,7 @@ async def login(client: AsyncClient, email: str, password: str, path: str = MANA
 async def bearer(client: AsyncClient, email: str, password: str, path: str = MANAGER_LOGIN) -> dict[str, str]:
     response = await login(client, email, password, path)
     assert response.status_code == 200
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+    return bearer_header(response.json()["access_token"])
 
 
 def an_event_payload(venue_id: int) -> dict:
@@ -60,7 +63,7 @@ async def test_google_sign_in_registers_a_customer(
     response = await google_sign_in(anonymous_client, container)
 
     assert response.status_code == 200
-    headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
+    headers = bearer_header(response.json()["access_token"])
     blocked = await anonymous_client.post(f"{API}/admin/venues", json={}, headers=headers)
     assert blocked.status_code == 403
 
@@ -218,7 +221,7 @@ async def test_a_customer_and_a_manager_may_share_an_email(
     await manager_headers(email="mia@example.com")
 
     response = await google_sign_in(anonymous_client, container, email="mia@example.com")
-    customer = {"Authorization": f"Bearer {response.json()['access_token']}"}
+    customer = bearer_header(response.json()["access_token"])
     me = (await anonymous_client.get(f"{API}/auth/me", headers=customer)).json()
     assert me["email"] == "mia@example.com" and "role" not in me
 
@@ -243,6 +246,10 @@ async def test_a_non_ascii_email_is_rejected_not_reported_as_taken(
     body = {"name": "José", "email": "josé@example.com", "password": "manager-password"}
 
     assert (await anonymous_client.post(f"{API}/admin/managers", json=body, headers=admin)).status_code == 422
+
+
+async def test_a_malformed_log_in_email_is_422(anonymous_client: AsyncClient):
+    assert (await login(anonymous_client, "not-an-email", "whatever-password")).status_code == 422
 
 
 async def test_wrong_password_is_401_with_a_bearer_challenge(anonymous_client: AsyncClient, container: Container):
@@ -341,3 +348,15 @@ async def test_manager_writes_are_audited_with_their_outcome(
     audit = [record.getMessage() for record in caplog.records if record.name == "app.audit"]
     assert len(audit) == 1
     assert audit[0].endswith("POST /api/v1/admin/events/9999/publish -> 404")
+
+
+async def test_concurrent_first_google_sign_ins_share_one_customer(container: Container):
+    repository = container.customer_repository()
+    data = CustomerCreateInternal(name="Gina", email="gina@example.com", google_sub="g-1")
+
+    first, second = await asyncio.gather(
+        repository.get_or_create_by_google_sub(data), repository.get_or_create_by_google_sub(data)
+    )
+
+    assert first.id == second.id
+    assert (await repository.get_by_google_sub("g-1")).id == first.id

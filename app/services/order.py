@@ -144,7 +144,7 @@ class OrderService:
         async with self._repository.load_for_release(order_id) as order_aggr:
             if self._validator.check_deletable(order_aggr.state):
                 order_data = await self._release_and_soft_delete(
-                    order_aggr, OrderDelete(reason="RESERVATION EXPIRED WITHOUT PAYMENT")
+                    order_aggr, OrderDelete(reason="RESERVATION EXPIRED WITHOUT PAYMENT"), manager_id=None
                 )
         if order_data is not None:
             await self._release_cached_seats(order_data)
@@ -159,7 +159,7 @@ class OrderService:
 
     @staticmethod
     async def _release_and_soft_delete(
-        order_aggr: OrderAggregate, payload: OrderDelete, manager_id: int | None = None
+        order_aggr: OrderAggregate, payload: OrderDelete, manager_id: int | None
     ) -> OrderWithTicketsInternal:
         order_data = order_aggr.with_tickets()
         await order_aggr.check_and_release_seats()

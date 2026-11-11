@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from app.enums import ManagerRole
-from app.exceptions import EntityConflictError, EntityNotFoundError
+from app.exceptions import MANAGER_NOT_FOUND_MSG, EntityConflictError, EntityNotFoundError
 from app.models import Manager
 from app.repositories._pagination import paginate
 from app.schemas import Page
@@ -34,10 +34,7 @@ class ManagerRepository:
 
     async def get_manager(self, manager_id: int) -> Manager:
         async with self.session_factory() as session:
-            manager = await session.get(Manager, manager_id)
-        if manager is None:
-            raise EntityNotFoundError(f"Manager with id {manager_id} not found")
-        return manager
+            return await self._get_and_check_manager(session, manager_id)
 
     async def get_by_email(self, email: str) -> Manager | None:
         async with self.session_factory() as session:
@@ -45,7 +42,7 @@ class ManagerRepository:
 
     async def update_password(self, manager_id: int, hashed_password: str) -> None:
         async with self.session_factory() as session:
-            manager = await session.get_one(Manager, manager_id)
+            manager = await self._get_and_check_manager(session, manager_id)
             manager.hashed_password = hashed_password
             await session.commit()
 
@@ -70,3 +67,10 @@ class ManagerRepository:
             if params.role is not None:
                 stmt = stmt.where(Manager.role == params.role)
             return await paginate(session, stmt, params, Manager)
+
+    @staticmethod
+    async def _get_and_check_manager(session: AsyncSession, manager_id: int) -> Manager:
+        manager = await session.get(Manager, manager_id)
+        if manager is None:
+            raise EntityNotFoundError(MANAGER_NOT_FOUND_MSG.format(manager_id=manager_id))
+        return manager

@@ -83,9 +83,26 @@ async def _audit_manager_writes(request: Request, call_next):
 
 
 # 3. Map domain exceptions to HTTP status codes in one place
-@app.exception_handler(EntityNotFoundError)
-async def _handle_not_found(_request: Request, exc: EntityNotFoundError):
-    return JSONResponse(status_code=404, content={"detail": str(exc)})
+# Starlette picks the handler by the exception's MRO, so subclasses listed
+# here (InvalidEventTimeError) win over their base (BusinessRuleViolationError).
+DOMAIN_ERROR_STATUS = {
+    EntityNotFoundError: 404,
+    PermissionDeniedError: 403,
+    TooManyLoginAttemptsError: 429,
+    InvalidEventTimeError: 422,
+    EntityConflictError: 409,
+    BusinessRuleViolationError: 409,
+}
+
+
+def _json_error(status_code: int):
+    async def handle(_request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+    return handle
+
+
+for error_type, status_code in DOMAIN_ERROR_STATUS.items():
+    app.add_exception_handler(error_type, _json_error(status_code))
 
 
 @app.exception_handler(AuthenticationError)
@@ -93,31 +110,6 @@ async def _handle_unauthenticated(_request: Request, exc: AuthenticationError):
     return JSONResponse(
         status_code=401, content={"detail": str(exc)}, headers={"WWW-Authenticate": "Bearer"}
     )
-
-
-@app.exception_handler(PermissionDeniedError)
-async def _handle_forbidden(_request: Request, exc: PermissionDeniedError):
-    return JSONResponse(status_code=403, content={"detail": str(exc)})
-
-
-@app.exception_handler(TooManyLoginAttemptsError)
-async def _handle_too_many_logins(_request: Request, exc: TooManyLoginAttemptsError):
-    return JSONResponse(status_code=429, content={"detail": str(exc)})
-
-
-@app.exception_handler(InvalidEventTimeError)
-async def _handle_invalid_time(_request: Request, exc: InvalidEventTimeError):
-    return JSONResponse(status_code=422, content={"detail": str(exc)})
-
-
-@app.exception_handler(EntityConflictError)
-async def _handle_conflict(_request: Request, exc: EntityConflictError):
-    return JSONResponse(status_code=409, content={"detail": str(exc)})
-
-
-@app.exception_handler(BusinessRuleViolationError)
-async def _handle_rule_violation(_request: Request, exc: BusinessRuleViolationError):
-    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 # 4. Register Routers

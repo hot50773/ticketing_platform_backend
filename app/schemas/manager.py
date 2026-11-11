@@ -1,9 +1,7 @@
-from datetime import datetime
-
 from sqlmodel import Field, SQLModel
 
 from app.enums import ManagerRole
-from ._shared import PaginationParams
+from ._shared import PaginationParams, _TableMetaMixin
 from .auth import Email
 
 
@@ -13,14 +11,18 @@ class ManagerCreate(SQLModel):
     password: str = Field(min_length=8, max_length=100)
 
 
+class ManagerLoginForm(SQLModel):
+    """POST /admin/auth/login. Field names follow the OAuth2 password flow, so
+    Swagger's Authorize can log in; `username` carries the email."""
+    username: Email
+    password: str
+
+
 class ManagerListParams(PaginationParams):
     role: ManagerRole | None = None
 
 
-class ManagerResponse(SQLModel):
-    id: int
-    created_at: datetime
-    updated_at: datetime
+class ManagerResponse(SQLModel, _TableMetaMixin):
     name: str
     email: str
     role: ManagerRole

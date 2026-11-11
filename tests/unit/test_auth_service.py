@@ -86,7 +86,6 @@ async def test_wrong_password_unknown_email_and_deactivated_account_fail_the_sam
         ("mia@example.com", "wrong"),
         ("nobody@example.com", "pw-12345678"),
         ("gone@example.com", "pw-12345678"),
-        ("not-an-email", "pw-12345678"),
     ]:
         with pytest.raises(AuthenticationError) as error:
             await service.login_manager(email, password, IP)
@@ -101,13 +100,6 @@ async def test_a_stored_value_that_is_not_a_hash_fails_like_a_wrong_password():
 
     with pytest.raises(AuthenticationError):
         await a_service(managers=managers).login_manager("mia@example.com", "1", IP)
-
-
-async def test_email_case_does_not_matter_at_log_in():
-    managers = FakeManagerRepository()
-    a_manager(managers)
-
-    await a_service(managers=managers).login_manager("Mia@Example.COM", "pw-12345678", IP)
 
 
 async def test_repeated_failures_block_even_the_right_password():
@@ -166,7 +158,7 @@ async def test_a_hash_with_outdated_parameters_is_upgraded_at_log_in():
     await a_service(managers=managers).login_manager("mia@example.com", "pw-12345678", IP)
 
     assert manager.hashed_password != weak
-    assert PasswordHasher().verify("pw-12345678", manager.hashed_password)
+    assert PasswordHasher().verify_and_update("pw-12345678", manager.hashed_password)[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -226,21 +218,6 @@ async def test_email_already_linked_to_another_google_account_conflicts():
 
     with pytest.raises(EntityConflictError):
         await a_service(customers=customers, verifier=verifier).login_with_google(GoogleLogin(id_token="t"))
-
-
-async def test_losing_a_first_sign_in_race_returns_the_winners_account():
-    class RacedCustomers(FakeCustomerRepository):
-        """The other request registers between our lookup and our insert."""
-        async def create_customer(self, data):
-            self.add(name=data.name, email=data.email, google_sub=data.google_sub)
-            raise EntityConflictError(data.email)
-
-    customers = RacedCustomers()
-    verifier = FakeGoogleIdTokenVerifier(a_google_identity())
-
-    token = await a_service(customers=customers, verifier=verifier).login_with_google(GoogleLogin(id_token="t"))
-
-    assert a_codec().decode_customer(token.access_token) == (await customers.get_by_google_sub("g-123")).id
 
 
 async def test_google_verifier_rejects_an_email_that_cannot_be_stored(monkeypatch):

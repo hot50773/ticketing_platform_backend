@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from redis import RedisError
 
-from app.exceptions import ORDER_NOT_FOUND_MSG, EntityConflictError, EntityNotFoundError
+from app.exceptions import MANAGER_NOT_FOUND_MSG, ORDER_NOT_FOUND_MSG, EntityConflictError, EntityNotFoundError
 from app.libs.clock.functional import now_utc
 from app.models import Customer, Event, EventZone, Order, Manager
 from app.schemas import Page
@@ -445,7 +445,6 @@ class FakeOrderAggregate:
             status=self.order.status,
             payment_status=self.order.payment_status,
             payment_deadline=self.order.payment_deadline,
-            customer_id=self.order.customer_id,
         )
 
     async def cancel_order(self) -> None:
@@ -456,7 +455,7 @@ class FakeOrderAggregate:
         self.calls.append("check_and_release_seats")
         self.released_seat_ids = [t.event_seat_id for t in self.pricing.tickets]
 
-    async def soft_delete_cascade(self, payload, manager_id: int | None = None) -> None:
+    async def soft_delete_cascade(self, payload, manager_id: int | None) -> None:
         self.calls.append("soft_delete_cascade")
         self.order.deleted_by_manager_id = manager_id
         self.order.deleted_at = now_utc()
@@ -627,8 +626,8 @@ class _FakeAccountTable:
 class FakeCustomerRepository(_FakeAccountTable):
     model = Customer
 
-    async def create_customer(self, data: CustomerCreateInternal) -> Customer:
-        return await self._create(data)
+    async def get_or_create_by_google_sub(self, data: CustomerCreateInternal) -> Customer:
+        return await self.get_by_google_sub(data.google_sub) or await self._create(data)
 
     async def get_by_google_sub(self, google_sub: str) -> Customer | None:
         return next((row for row in self.rows.values() if row.google_sub == google_sub), None)
@@ -652,7 +651,7 @@ class FakeManagerRepository(_FakeAccountTable):
 
     async def get_manager(self, manager_id: int) -> Manager:
         if manager_id not in self.rows:
-            raise EntityNotFoundError(f"Manager with id {manager_id} not found")
+            raise EntityNotFoundError(MANAGER_NOT_FOUND_MSG.format(manager_id=manager_id))
         return self.rows[manager_id]
 
     async def set_active_if_role(self, manager_id: int, role, is_active: bool) -> Manager | None:

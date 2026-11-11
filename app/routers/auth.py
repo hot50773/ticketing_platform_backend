@@ -3,14 +3,13 @@ They are separate tables, so the same email can be both."""
 from typing import Annotated
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends, Request, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, Form, Request, status
 
 from app.containers import Container
 from app.routers._auth import AnyManager, Customer, client_ip
 from app.schemas.auth import GoogleLogin, TokenResponse
 from app.schemas.customer import CustomerResponse
-from app.schemas.manager import ManagerResponse
+from app.schemas.manager import ManagerLoginForm, ManagerResponse
 from app.services.auth import AuthService
 from app.services.customer import CustomerService
 
@@ -41,10 +40,10 @@ async def get_me(
 @inject
 async def login_manager(
     request: Request,
-    form: Annotated[OAuth2PasswordRequestForm, Depends()],
+    form: Annotated[ManagerLoginForm, Form()],
     auth_service: AuthService = Depends(Provide[Container.auth_service]),
 ):
-    """Admins and managers. OAuth2 password flow: `username` carries the email."""
+    """Admins and managers."""
     return await auth_service.login_manager(form.username, form.password, client_ip(request))
 
 

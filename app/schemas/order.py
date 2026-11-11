@@ -132,7 +132,6 @@ class OrderStateInternal(SQLModel):
     status: OrderStatus
     payment_status: PaymentStatus
     payment_deadline: datetime | None
-    customer_id: int
 
 
 class OrderTicketInternal(SQLModel):

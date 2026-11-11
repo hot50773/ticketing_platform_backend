@@ -57,6 +57,10 @@ async def clean_state(container: Container) -> AsyncGenerator[None, None]:
     yield
 
 
+def bearer_header(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
 async def _save(container: Container, account: Customer | Manager) -> int:
     async with container.db().get_async_session() as session:
         session.add(account)
@@ -70,7 +74,7 @@ def customer_headers(container: Container):
 
     async def _headers(email: str = "customer@example.com") -> dict[str, str]:
         customer_id = await _save(container, Customer(name="customer", email=email))
-        return {"Authorization": f"Bearer {container.access_token_codec().encode_customer(customer_id)}"}
+        return bearer_header(container.access_token_codec().encode_customer(customer_id))
 
     return _headers
 
@@ -84,7 +88,7 @@ def manager_headers(container: Container):
             name=role.lower(), email=email or f"{role.lower()}@example.com", hashed_password="x", role=role
         )
         manager_id = await _save(container, account)
-        return {"Authorization": f"Bearer {container.access_token_codec().encode_manager(manager_id)}"}
+        return bearer_header(container.access_token_codec().encode_manager(manager_id))
 
     return _headers
 

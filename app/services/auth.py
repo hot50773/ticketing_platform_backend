@@ -24,7 +24,6 @@ from app.schemas.auth import (
     GoogleIdentityInternal,
     GoogleLogin,
     TokenResponse,
-    normalize_email,
 )
 from app.schemas.customer import CustomerCreateInternal
 
@@ -55,12 +54,9 @@ class AuthService:
         self._limiter = login_attempt_limiter
 
     async def login_manager(self, email: str, password: str, client_ip: str) -> TokenResponse:
-        """Unknown email, wrong password and a deactivated account give the same
-        error and take the same time, so accounts cannot be probed for."""
-        try:
-            email = normalize_email(email)
-        except ValueError as exc:
-            raise AuthenticationError(INVALID_CREDENTIALS_MSG) from exc
+        """Expects an already-normalised email (the Email schema type). Unknown email,
+        wrong password and a deactivated account give the same error and take the
+        same time, so accounts cannot be probed for."""
         failures = await self._limiter.failure_count(client_ip, email)
         if self._limiter.is_over_limit(failures):
             raise TooManyLoginAttemptsError("Too many failed log-ins, try again later")
@@ -89,27 +85,14 @@ class AuthService:
 
     async def _first_google_sign_in(self, identity: GoogleIdentityInternal) -> Customer:
         customer = await self._customers.get_by_email(identity.email)
-        if customer is not None and customer.google_sub is not None:
-            raise EntityConflictError(f"'{identity.email}' is linked to another Google account")
-
-        try:
-            customer = await self._link_or_register(customer, identity)
-        except EntityConflictError:
-            # A concurrent first sign-in with the same Google account got there first
-            customer = await self._customers.get_by_google_sub(identity.sub)
-            if customer is None:
-                raise
-        return customer
-
-    async def _link_or_register(
-        self, customer: Customer | None, identity: GoogleIdentityInternal
-    ) -> Customer:
         if customer is None:
-            customer = await self._customers.create_customer(
+            customer = await self._customers.get_or_create_by_google_sub(
                 CustomerCreateInternal(
                     name=identity.name, email=identity.email, google_sub=identity.sub
                 )
             )
+        elif customer.google_sub is not None:
+            raise EntityConflictError(f"'{identity.email}' is linked to another Google account")
         else:
             # A customer from before Google sign-in. Google verified the email and
             # customers have no other way in, so this is the same person.
