@@ -137,6 +137,16 @@ async def test_a_successful_log_in_clears_the_failure_count():
     assert limiter.failures == {}
 
 
+async def test_a_clean_log_in_skips_the_reset_round_trip():
+    managers = FakeManagerRepository()
+    a_manager(managers)
+    limiter = FakeLoginAttemptLimiter()
+
+    await a_service(managers=managers, limiter=limiter).login_manager("mia@example.com", "pw-12345678", IP)
+
+    assert limiter.resets == 0
+
+
 async def test_a_deactivated_manager_with_the_right_password_still_counts_as_a_failure():
     managers = FakeManagerRepository()
     a_manager(managers, is_active=False)

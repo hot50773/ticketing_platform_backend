@@ -61,7 +61,8 @@ class AuthService:
             email = normalize_email(email)
         except ValueError as exc:
             raise AuthenticationError(INVALID_CREDENTIALS_MSG) from exc
-        if await self._limiter.is_blocked(client_ip, email):
+        failures = await self._limiter.failure_count(client_ip, email)
+        if self._limiter.is_over_limit(failures):
             raise TooManyLoginAttemptsError("Too many failed log-ins, try again later")
 
         manager = await self._managers.get_by_email(email)
@@ -73,7 +74,8 @@ class AuthService:
             await self._limiter.record_failure(client_ip, email)
             raise AuthenticationError(INVALID_CREDENTIALS_MSG)
 
-        await self._limiter.reset(client_ip, email)
+        if failures:
+            await self._limiter.reset(client_ip, email)
         if updated_hash:
             await self._managers.update_password(manager.id, updated_hash)
         return TokenResponse(access_token=self._codec.encode_manager(manager.id))
@@ -127,7 +129,7 @@ class AuthService:
             raise AuthenticationError(INVALID_TOKEN_MSG) from exc
         if not manager.is_active:
             raise AuthenticationError("This account has been deactivated")
-        return CurrentManagerInternal(id=manager.id, role=manager.role)
+        return CurrentManagerInternal.model_validate(manager, from_attributes=True)
 
     @staticmethod
     def _read_token(decode: Callable[[str], int], token: str) -> int:

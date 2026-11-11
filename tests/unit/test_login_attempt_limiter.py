@@ -50,6 +50,10 @@ def a_limiter(max_failures: int = 3) -> LoginAttemptLimiter:
     return LoginAttemptLimiter(FakeRedis(), max_failures=max_failures, window_seconds=900)
 
 
+async def blocked(limiter: LoginAttemptLimiter, client_ip: str, email: str) -> bool:
+    return limiter.is_over_limit(await limiter.failure_count(client_ip, email))
+
+
 async def fail(limiter: LoginAttemptLimiter, times: int, client_ip: str, email: str) -> None:
     for _ in range(times):
         await limiter.record_failure(client_ip, email)
@@ -59,10 +63,10 @@ async def test_the_same_ip_and_email_is_blocked_after_max_failures():
     limiter = a_limiter()
 
     await fail(limiter, 2, PROXY_IP, "mia@example.com")
-    assert not await limiter.is_blocked(PROXY_IP, "mia@example.com")
+    assert not await blocked(limiter, PROXY_IP, "mia@example.com")
 
     await fail(limiter, 1, PROXY_IP, "mia@example.com")
-    assert await limiter.is_blocked(PROXY_IP, "mia@example.com")
+    assert await blocked(limiter, PROXY_IP, "mia@example.com")
 
 
 async def test_other_accounts_behind_the_same_proxy_ip_are_not_blocked():
@@ -70,7 +74,7 @@ async def test_other_accounts_behind_the_same_proxy_ip_are_not_blocked():
 
     await fail(limiter, 3, PROXY_IP, "mia@example.com")
 
-    assert not await limiter.is_blocked(PROXY_IP, "root@example.com")
+    assert not await blocked(limiter, PROXY_IP, "root@example.com")
 
 
 async def test_failures_on_different_accounts_do_not_add_up():
@@ -79,8 +83,8 @@ async def test_failures_on_different_accounts_do_not_add_up():
     await fail(limiter, 2, PROXY_IP, "mia@example.com")
     await fail(limiter, 2, PROXY_IP, "root@example.com")
 
-    assert not await limiter.is_blocked(PROXY_IP, "mia@example.com")
-    assert not await limiter.is_blocked(PROXY_IP, "root@example.com")
+    assert not await blocked(limiter, PROXY_IP, "mia@example.com")
+    assert not await blocked(limiter, PROXY_IP, "root@example.com")
 
 
 async def test_the_same_account_from_another_ip_is_not_blocked():
@@ -88,7 +92,7 @@ async def test_the_same_account_from_another_ip_is_not_blocked():
 
     await fail(limiter, 3, PROXY_IP, "mia@example.com")
 
-    assert not await limiter.is_blocked("203.0.113.7", "mia@example.com")
+    assert not await blocked(limiter, "203.0.113.7", "mia@example.com")
 
 
 async def test_reset_clears_only_that_ip_and_email():
@@ -98,5 +102,5 @@ async def test_reset_clears_only_that_ip_and_email():
 
     await limiter.reset(PROXY_IP, "mia@example.com")
 
-    assert not await limiter.is_blocked(PROXY_IP, "mia@example.com")
-    assert await limiter.is_blocked(PROXY_IP, "root@example.com")
+    assert not await blocked(limiter, PROXY_IP, "mia@example.com")
+    assert await blocked(limiter, PROXY_IP, "root@example.com")

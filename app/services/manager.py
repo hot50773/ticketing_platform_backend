@@ -33,16 +33,15 @@ class ManagerService:
         )
         return self._mapper.to_manager(result)
 
-    async def get_manager(self, manager_id: int) -> ManagerResponse:
-        return self._mapper.to_manager(await self._repository.get_manager(manager_id))
-
     async def set_manager_active(self, manager_id: int, is_active: bool) -> ManagerResponse:
         """Admins are out of reach: they only come from the CLI, and this way an
         admin cannot lock themselves or the last other admin out."""
-        target = await self._repository.get_manager(manager_id)
-        if target.role != ManagerRole.MANAGER:
+        manager = await self._repository.set_active_if_role(manager_id, ManagerRole.MANAGER, is_active)
+        if manager is None:
+            # Raises 404 when the id does not exist; otherwise the target is an admin
+            await self._repository.get_manager(manager_id)
             raise PermissionDeniedError("Admins cannot be changed over the API")
-        return self._mapper.to_manager(await self._repository.set_active(manager_id, is_active))
+        return self._mapper.to_manager(manager)
 
     async def list_managers(self, params: ManagerListParams) -> Page[ManagerResponse]:
         return self._mapper.to_manager_page(await self._repository.get_manager_list(params))

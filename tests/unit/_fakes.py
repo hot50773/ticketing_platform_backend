@@ -655,9 +655,12 @@ class FakeManagerRepository(_FakeAccountTable):
             raise EntityNotFoundError(f"Manager with id {manager_id} not found")
         return self.rows[manager_id]
 
-    async def set_active(self, manager_id: int, is_active: bool) -> Manager:
-        manager = await self.get_manager(manager_id)
-        manager.is_active = is_active
+    async def set_active_if_role(self, manager_id: int, role, is_active: bool) -> Manager | None:
+        manager = self.rows.get(manager_id)
+        if manager is not None and manager.role == role:
+            manager.is_active = is_active
+        else:
+            manager = None
         return manager
 
 
@@ -680,13 +683,18 @@ class FakeLoginAttemptLimiter:
     def __init__(self, max_failures: int = 5):
         self.max_failures = max_failures
         self.failures: dict[tuple[str, str], int] = {}
+        self.resets = 0
 
-    async def is_blocked(self, client_ip: str, email: str) -> bool:
-        return self.failures.get((client_ip, email), 0) >= self.max_failures
+    async def failure_count(self, client_ip: str, email: str) -> int:
+        return self.failures.get((client_ip, email), 0)
+
+    def is_over_limit(self, failures: int) -> bool:
+        return failures >= self.max_failures
 
     async def record_failure(self, client_ip: str, email: str) -> None:
         key = (client_ip, email)
         self.failures[key] = self.failures.get(key, 0) + 1
 
     async def reset(self, client_ip: str, email: str) -> None:
+        self.resets += 1
         self.failures.pop((client_ip, email), None)

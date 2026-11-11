@@ -15,9 +15,11 @@ class LoginAttemptLimiter:
         self._max_failures = max_failures
         self._window_seconds = window_seconds
 
-    async def is_blocked(self, client_ip: str, email: str) -> bool:
-        failures = await self._redis_client.get(self._key(client_ip, email))
-        return int(failures or 0) >= self._max_failures
+    async def failure_count(self, client_ip: str, email: str) -> int:
+        return int(await self._redis_client.get(self._key(client_ip, email)) or 0)
+
+    def is_over_limit(self, failures: int) -> bool:
+        return failures >= self._max_failures
 
     async def record_failure(self, client_ip: str, email: str) -> None:
         key = self._key(client_ip, email)

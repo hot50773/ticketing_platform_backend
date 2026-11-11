@@ -1,9 +1,11 @@
 import logging
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+from app.enums import ManagerRole
 from app.exceptions import EntityConflictError, EntityNotFoundError
 from app.models import Manager
 from app.repositories._pagination import paginate
@@ -47,14 +49,19 @@ class ManagerRepository:
             manager.hashed_password = hashed_password
             await session.commit()
 
-    async def set_active(self, manager_id: int, is_active: bool) -> Manager:
+    async def set_active_if_role(
+        self, manager_id: int, role: ManagerRole, is_active: bool
+    ) -> Manager | None:
+        """None when no manager has this id and role."""
+        stmt = (
+            update(Manager)
+            .where(Manager.id == manager_id, Manager.role == role)
+            .values(is_active=is_active)
+            .returning(Manager)
+        )
         async with self.session_factory() as session:
-            manager = await session.get(Manager, manager_id)
-            if manager is None:
-                raise EntityNotFoundError(f"Manager with id {manager_id} not found")
-            manager.is_active = is_active
+            manager = (await session.scalars(stmt)).one_or_none()
             await session.commit()
-            await session.refresh(manager)
             return manager
 
     async def get_manager_list(self, params: ManagerListParams) -> Page[Manager]:

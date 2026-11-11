@@ -5,6 +5,7 @@ from pydantic import AfterValidator
 from sqlmodel import SQLModel
 
 from app.enums import ManagerRole
+from ._shared import _TableMetaMixin
 
 
 def normalize_email(value: str) -> str:
@@ -40,9 +41,12 @@ class CurrentCustomerInternal(SQLModel):
     id: int
 
 
-class CurrentManagerInternal(SQLModel):
-    id: int
+class CurrentManagerInternal(SQLModel, _TableMetaMixin):
+    """The row the guard already loaded, so GET /admin/auth/me needs no second query."""
+    name: str
+    email: str
     role: ManagerRole
+    is_active: bool
 
 
 class GoogleIdentityInternal(SQLModel):

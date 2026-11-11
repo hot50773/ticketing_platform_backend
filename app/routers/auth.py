@@ -13,7 +13,6 @@ from app.schemas.customer import CustomerResponse
 from app.schemas.manager import ManagerResponse
 from app.services.auth import AuthService
 from app.services.customer import CustomerService
-from app.services.manager import ManagerService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 admin_router = APIRouter(prefix="/admin/auth", tags=["auth"])
@@ -50,9 +49,5 @@ async def login_manager(
 
 
 @admin_router.get("/me", response_model=ManagerResponse, status_code=status.HTTP_200_OK)
-@inject
-async def get_manager_me(
-    manager: AnyManager,
-    manager_service: ManagerService = Depends(Provide[Container.manager_service]),
-):
-    return await manager_service.get_manager(manager.id)
+async def get_manager_me(manager: AnyManager):
+    return manager
