@@ -28,8 +28,9 @@
 # 1. 安裝依賴（含 dev group）
 uv sync
 
-# 2. 建立環境變數檔
+# 2. 建立環境變數檔，並填入 JWT_SECRET_KEY（必填，否則 API 無法啟動）
 cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 # 3. 啟動 Postgres（:15432）與 Redis（:16379）
 docker compose up -d
@@ -41,11 +42,24 @@ uv run alembic upgrade head
 uv run uvicorn main:app --reload
 ```
 
-啟動後開 <http://localhost:8000/docs> 看 Swagger 文件。API 都掛在 `/api/v1` 底下：
+啟動後開 <http://localhost:8000/docs> 看 Swagger 文件。API 都掛在 `/api/v1` 底下，分成前台與後台：
 
-- `/venues`、`/zones`、`/seats`：場地、區域、座位
-- `/events`：活動建立、上下架、座位配置
-- `/orders`：下單、付款、取消
+| 前台 | 用途 |
+| --- | --- |
+| `/auth` | customer 以 Google 登入（`/auth/google`）、查看自己（`/auth/me`） |
+| `/events` | 販售中活動列表、已上架活動的詳情與座位 |
+| `/venues`、`/zones`、`/seats` | 場地、區域、座位查詢 |
+| `/orders` | 下單、付款、取消（需 customer 登入） |
+
+| 後台（`/admin`，需 manager 登入） | 用途 |
+| --- | --- |
+| `/admin/auth` | manager 以密碼登入（`/admin/auth/login`）、查看自己 |
+| `/admin/managers` | 新增、列出、停用與重新啟用 manager（限 ADMIN） |
+| `/admin/events` | 活動建立、編輯、上下架、座位配置；可讀未上架的活動 |
+| `/admin/venues`、`/admin/zones` | 建立場地、區域、座位；刪除場地 |
+| `/admin/orders` | 刪除逾期未付款的訂單 |
+
+customer 只能用 Google 登入；manager 用 email 與密碼登入，連續失敗太多次會被暫時擋下（429）。
 
 ### 背景 worker
 
@@ -61,6 +75,18 @@ uv run taskiq scheduler app.workers:scheduler app.queue.delayed.process_expired_
 
 沒開這兩個 process 的話，逾期訂單不會被自動處理。
 
+### 建立第一個 admin
+
+ADMIN 帳號只能從 CLI 建立；API 只讓 ADMIN 新增 MANAGER（`POST /api/v1/admin/managers`）。
+資料表建好之後執行：
+
+```bash
+uv run python -m app.scripts.create_admin --name Root --email root@example.com
+```
+
+指令會提示輸入密碼（至少 8 個字元，輸入時不會顯示）。email 一律存成小寫，之後用
+`POST /api/v1/admin/auth/login` 登入。
+
 ## 環境變數
 
 設定由 `app/config.py` 讀取，預設讀 `.env`；設 `ENV_FILE` 可以換成別的檔案。
@@ -71,6 +97,11 @@ uv run taskiq scheduler app.workers:scheduler app.queue.delayed.process_expired_
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_PORT` | 給 docker compose 建立資料庫用 | 見 `.env.example` |
 | `REDIS_URL` | Redis 連線字串 | `redis://localhost:16379/0` |
 | `REDIS_HOST` / `REDIS_PORT` | 給 docker compose 對外開 port 用 | `localhost` / `16379` |
+| `JWT_SECRET_KEY` | 簽 access token 的金鑰，**必填**，至少 32 個字元 | 無，用 `python -c "import secrets; print(secrets.token_urlsafe(48))"` 產生 |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | access token 有效分鐘數 | `60` |
+| `GOOGLE_CLIENT_ID` | Google Sign-In 的 OAuth client ID；空白代表不開放 Google 登入 | 空白 |
+| `LOGIN_MAX_FAILURES` | manager 登入同一組（IP、email）允許的失敗次數 | `5` |
+| `LOGIN_FAILURE_WINDOW_SECONDS` | 上面失敗次數的計算時間窗（秒） | `900` |
 | `ENABLE_CRON_JOBS` | 是否啟動 APScheduler 定時任務 | `true` |
 | `DB_ECHO` | 印出 SQL 語句 | `false` |
 
@@ -115,29 +146,27 @@ app/
   main.py            FastAPI app、lifespan、例外對應 HTTP 狀態碼
   config.py          環境變數設定
   containers.py      依賴注入容器
-  routers/           HTTP 路由（venue / event / order）
+  routers/           HTTP 路由（auth / manager / venue / event / order），各分前台與後台
   services/          業務流程；validators/ 放業務規則檢查
   aggregates/        領域聚合（event、order）
   repositories/      Postgres 存取
   models/            SQLModel 資料表
   schemas/           API 與內部用的 Pydantic schema
-  cache/             Redis 存取；lua/ 放原子操作腳本
+  cache/             Redis 存取（座位 bitmap、活動快取、登入失敗計數）；lua/ 放原子操作腳本
+  libs/security/     密碼雜湊、access token、Google ID token 驗證
+  scripts/           CLI 工具（create_admin）
   workers/           taskiq broker 與 worker 入口
   queue/delayed/     延遲任務（付款期限到期）
   jobs/              APScheduler 定時任務
 migrations/          Alembic migration
 tests/unit/          單元測試（fake 取代外部依賴）
 tests/e2e/           走真實 Postgres / Redis 的測試
-documents/           設計文件
 ```
 
 ## 文件
-接手這個 codebase 建議從這裡開始:
 
-- [`documents/dependency-map.html`](documents/dependency-map.html) — **依賴地圖**。`app/` 的分層原則、
-  交易邊界為什麼長成這樣、Redis 寫入順序為何上下架相反,以及可直接執行的驗證指令。
-  用瀏覽器開啟即可,無外部相依。
 - [`活動CRUD規格.md`](活動CRUD規格.md) — 活動 CRUD 的行為規格與歷次更正紀錄。
+- [`CLAUDE.md`](CLAUDE.md) — 註解規則與 router 命名慣例。
 
 ## 設計筆記
 
