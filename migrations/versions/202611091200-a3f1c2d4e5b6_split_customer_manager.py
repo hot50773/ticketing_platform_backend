@@ -4,9 +4,15 @@
 改成 customer_id。後台帳號另開 manager 表（role 分 ADMIN、MANAGER）：兩邊各自
 登入、各自的 email 唯一，同一個 email 可以同時是 customer 和 manager。
 
-只用 Google 登入的 customer 沒有密碼，所以 hashed_password 改為可為 NULL。
+- customer 只能用 Google 登入，所以移除 hashed_password（舊 user 存的本來就是
+  假值 "1"）；舊帳號第一次用 Google 登入時依 email 綁定 google_sub。
+- email 一律存小寫並以 CHECK 保證。既有資料轉小寫後若撞到 UNIQUE，migration 會
+  直接失敗：兩個帳號要合併成哪一個得由人決定。
+- manager.is_active：停用的 manager 即使 token 還沒過期也不能再操作。
+- order.deleted_by_manager_id：記下是哪個 manager 刪除了訂單；系統釋放逾期訂單時為 NULL。
 
-downgrade 會 drop 整張 manager 表，所有後台帳號跟著消失。
+downgrade 會 drop 整張 manager 表，所有後台帳號跟著消失；user.hashed_password
+補回 "!"（不對應任何雜湊，所以無法登入），也不會還原 email 的大小寫。
 
 Revision ID: a3f1c2d4e5b6
 Revises: 7c4e91ab2d38
@@ -26,6 +32,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 manager_role_enum = sa.Enum("ADMIN", "MANAGER", name="managerrole")
+EMAIL_IS_LOWERCASE = "email = lower(email)"
 
 
 def upgrade() -> None:
@@ -33,16 +40,13 @@ def upgrade() -> None:
     op.execute("ALTER SEQUENCE user_id_seq RENAME TO customer_id_seq")
     op.execute("ALTER INDEX user_pkey RENAME TO customer_pkey")
     op.execute("ALTER TABLE customer RENAME CONSTRAINT user_email_key TO customer_email_key")
-    op.alter_column("customer", "hashed_password", nullable=True)
+    op.drop_column("customer", "hashed_password")
     op.add_column(
         "customer", sa.Column("google_sub", sqlmodel.sql.sqltypes.AutoString(), nullable=True)
     )
     op.create_unique_constraint("customer_google_sub_key", "customer", ["google_sub"])
-
-    op.alter_column("order", "user_id", new_column_name="customer_id")
-    op.execute(
-        'ALTER TABLE "order" RENAME CONSTRAINT order_user_id_fkey TO order_customer_id_fkey'
-    )
+    op.execute("UPDATE customer SET email = lower(email) WHERE email <> lower(email)")
+    op.create_check_constraint("ck_customer_email_lowercase", "customer", EMAIL_IS_LOWERCASE)
 
     op.create_table(
         "manager",
@@ -53,25 +57,46 @@ def upgrade() -> None:
         sa.Column("email", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("hashed_password", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("role", manager_role_enum, nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("email"),
+        sa.CheckConstraint(EMAIL_IS_LOWERCASE, name="ck_manager_email_lowercase"),
+    )
+
+    op.alter_column("order", "user_id", new_column_name="customer_id")
+    op.execute(
+        'ALTER TABLE "order" RENAME CONSTRAINT order_user_id_fkey TO order_customer_id_fkey'
+    )
+    op.add_column(
+        "order",
+        sa.Column("deleted_by_manager_id", sa.Integer(), nullable=True, comment="刪除訂單的管理者"),
+    )
+    op.create_foreign_key(
+        "order_deleted_by_manager_id_fkey", "order", "manager", ["deleted_by_manager_id"], ["id"]
     )
 
 
 def downgrade() -> None:
-    op.drop_table("manager")
-    manager_role_enum.drop(op.get_bind())
-
+    op.drop_constraint("order_deleted_by_manager_id_fkey", "order", type_="foreignkey")
+    op.drop_column("order", "deleted_by_manager_id")
     op.execute(
         'ALTER TABLE "order" RENAME CONSTRAINT order_customer_id_fkey TO order_user_id_fkey'
     )
     op.alter_column("order", "customer_id", new_column_name="user_id")
 
+    op.drop_table("manager")
+    manager_role_enum.drop(op.get_bind())
+
+    op.drop_constraint("ck_customer_email_lowercase", "customer", type_="check")
     op.drop_constraint("customer_google_sub_key", "customer", type_="unique")
     op.drop_column("customer", "google_sub")
-    # "!" matches no hash, so a Google-only customer survives but cannot log in
-    op.execute("UPDATE customer SET hashed_password = '!' WHERE hashed_password IS NULL")
-    op.alter_column("customer", "hashed_password", nullable=False)
+    op.add_column(
+        "customer",
+        sa.Column(
+            "hashed_password", sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default="!"
+        ),
+    )
+    op.alter_column("customer", "hashed_password", server_default=None)
     op.execute("ALTER TABLE customer RENAME CONSTRAINT customer_email_key TO user_email_key")
     op.execute("ALTER INDEX customer_pkey RENAME TO user_pkey")
     op.execute("ALTER SEQUENCE customer_id_seq RENAME TO user_id_seq")
