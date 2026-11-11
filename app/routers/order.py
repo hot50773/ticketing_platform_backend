@@ -21,8 +21,8 @@ from app.schemas.order import (
     OrderResponse,
 )
 
-router = APIRouter(prefix="/orders", tags=["orders"])
-admin_router = APIRouter(
+customer_router = APIRouter(prefix="/orders", tags=["orders"])
+manager_router = APIRouter(
     prefix="/admin/orders", tags=["orders"], dependencies=[Depends(get_current_manager)]
 )
 
@@ -30,9 +30,9 @@ admin_router = APIRouter(
 # Order
 # --------------------------------------------------------------------------- #
 
-@router.post("", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED)
+@customer_router.post("", response_model=OrderDetailResponse, status_code=status.HTTP_201_CREATED)
 @inject
-async def create_order(
+async def customer_create_order(
     payload: OrderCreate,
     customer: Customer,
     order_service: OrderService = Depends(Provide[Container.order_service]),
@@ -41,9 +41,9 @@ async def create_order(
     return await order_service.create_order(payload, customer.id)
 
 
-@router.get("", response_model=Page[OrderResponse], status_code=status.HTTP_200_OK)
+@customer_router.get("", response_model=Page[OrderResponse], status_code=status.HTTP_200_OK)
 @inject
-async def list_orders(
+async def customer_list_orders(
     pagination: Annotated[PaginationParams, Query()],
     customer: Customer,
     order_service: OrderService = Depends(Provide[Container.order_service]),
@@ -52,9 +52,9 @@ async def list_orders(
     return await order_service.list_orders(pagination, customer.id)
 
 
-@router.get("/{order_id}", response_model=OrderDetailResponse, status_code=status.HTTP_200_OK)
+@customer_router.get("/{order_id}", response_model=OrderDetailResponse, status_code=status.HTTP_200_OK)
 @inject
-async def get_order(
+async def customer_get_order(
     order_id: int,
     customer: Customer,
     order_service: OrderService = Depends(Provide[Container.order_service]),
@@ -63,9 +63,9 @@ async def get_order(
     return await order_service.get_order(order_id, customer.id)
 
 
-@router.post("/{order_id}/pay", response_model=OrderResponse, status_code=status.HTTP_200_OK)
+@customer_router.post("/{order_id}/pay", response_model=OrderResponse, status_code=status.HTTP_200_OK)
 @inject
-async def pay_order(
+async def customer_pay_order(
     order_id: int,
     payload: OrderPay,
     customer: Customer,
@@ -76,9 +76,9 @@ async def pay_order(
     return await order_service.execute_payment(order_id, payload, customer.id)
 
 
-@router.post("/{order_id}/cancel", response_model=OrderResponse, status_code=status.HTTP_200_OK)
+@customer_router.post("/{order_id}/cancel", response_model=OrderResponse, status_code=status.HTTP_200_OK)
 @inject
-async def cancel_order(
+async def customer_cancel_order(
     order_id: int,
     customer: Customer,
     order_service: OrderService = Depends(Provide[Container.order_service]),
@@ -88,9 +88,9 @@ async def cancel_order(
     return await order_service.cancel_order(order_id, customer.id)
 
 
-@admin_router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
+@manager_router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
-async def delete_order(
+async def manager_delete_order(
     order_id: int,
     payload: OrderDelete,
     manager: AnyManager,

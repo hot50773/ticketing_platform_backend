@@ -114,10 +114,10 @@ async def _handle_unauthenticated(_request: Request, exc: AuthenticationError):
 
 # 4. Register Routers
 for module in (auth, event, order, venue):
-    app.include_router(module.router, prefix="/api/v1")
+    app.include_router(module.customer_router, prefix="/api/v1")
 # Every route only managers may call lives under /admin.
 for module in (auth, manager, event, order, venue):
-    app.include_router(module.admin_router, prefix="/api/v1")
+    app.include_router(module.manager_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

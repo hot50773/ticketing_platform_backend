@@ -12,23 +12,23 @@ from app.schemas.manager import ManagerCreate
 from app.schemas.manager import ManagerListParams, ManagerResponse
 from app.services.manager import ManagerService
 
-admin_router = APIRouter(
+manager_router = APIRouter(
     prefix="/admin/managers", tags=["managers"], dependencies=[Depends(require_admin)]
 )
 
 
-@admin_router.post("", response_model=ManagerResponse, status_code=status.HTTP_201_CREATED)
+@manager_router.post("", response_model=ManagerResponse, status_code=status.HTTP_201_CREATED)
 @inject
-async def create_manager(
+async def admin_create_manager(
     payload: ManagerCreate,
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):
     return await manager_service.create_manager(payload, ManagerRole.MANAGER)
 
 
-@admin_router.get("", response_model=Page[ManagerResponse], status_code=status.HTTP_200_OK)
+@manager_router.get("", response_model=Page[ManagerResponse], status_code=status.HTTP_200_OK)
 @inject
-async def list_managers(
+async def admin_list_managers(
     params: Annotated[ManagerListParams, Query()],
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):
@@ -36,9 +36,9 @@ async def list_managers(
     return await manager_service.list_managers(params)
 
 
-@admin_router.post("/{manager_id}/deactivate", response_model=ManagerResponse, status_code=status.HTTP_200_OK)
+@manager_router.post("/{manager_id}/deactivate", response_model=ManagerResponse, status_code=status.HTTP_200_OK)
 @inject
-async def deactivate_manager(
+async def admin_deactivate_manager(
     manager_id: int,
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):
@@ -46,9 +46,9 @@ async def deactivate_manager(
     return await manager_service.set_manager_active(manager_id, is_active=False)
 
 
-@admin_router.post("/{manager_id}/activate", response_model=ManagerResponse, status_code=status.HTTP_200_OK)
+@manager_router.post("/{manager_id}/activate", response_model=ManagerResponse, status_code=status.HTTP_200_OK)
 @inject
-async def activate_manager(
+async def admin_activate_manager(
     manager_id: int,
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):

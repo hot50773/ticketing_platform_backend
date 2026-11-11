@@ -17,22 +17,22 @@ from app.schemas.venue import (
 )
 from app.exceptions import EntityNotFoundError, EntityConflictError, ActiveEventsExistError
 
-router = APIRouter(tags=["venues"])
-admin_router = APIRouter(prefix="/admin", tags=["venues"], dependencies=[Depends(get_current_manager)])
+customer_router = APIRouter(tags=["venues"])
+manager_router = APIRouter(prefix="/admin", tags=["venues"], dependencies=[Depends(get_current_manager)])
 
 
-@admin_router.post("/venues", response_model=VenueResponse, status_code=status.HTTP_201_CREATED)
+@manager_router.post("/venues", response_model=VenueResponse, status_code=status.HTTP_201_CREATED)
 @inject
-async def create_venue(
+async def manager_create_venue(
     venue_data: VenueCreate,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     return await venue_service.create_venue(venue_data)
 
 
-@router.get("/venues", response_model=Page[VenueResponse], status_code=status.HTTP_200_OK)
+@customer_router.get("/venues", response_model=Page[VenueResponse], status_code=status.HTTP_200_OK)
 @inject
-async def list_venues(
+async def customer_list_venues(
     pagination: Annotated[PaginationParams, Query()],
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
@@ -40,9 +40,9 @@ async def list_venues(
     return await venue_service.list_venues(pagination)
 
 
-@router.get("/venues/{venue_id}", response_model=VenueResponse, status_code=status.HTTP_200_OK)
+@customer_router.get("/venues/{venue_id}", response_model=VenueResponse, status_code=status.HTTP_200_OK)
 @inject
-async def get_venue(
+async def customer_get_venue(
     venue_id: int,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
@@ -53,9 +53,9 @@ async def get_venue(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@admin_router.delete("/venues/{venue_id}", status_code=status.HTTP_200_OK)
+@manager_router.delete("/venues/{venue_id}", status_code=status.HTTP_200_OK)
 @inject
-async def delete_venue(
+async def manager_delete_venue(
     venue_id: int,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
@@ -72,9 +72,9 @@ async def delete_venue(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@admin_router.post("/venues/{venue_id}/zones", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
+@manager_router.post("/venues/{venue_id}/zones", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
 @inject
-async def create_zone(
+async def manager_create_zone(
     venue_id: int,
     zone_data: ZoneBase,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
@@ -88,9 +88,9 @@ async def create_zone(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
-@router.get("/venues/{venue_id}/zones", response_model=Page[ZoneResponse], status_code=status.HTTP_200_OK)
+@customer_router.get("/venues/{venue_id}/zones", response_model=Page[ZoneResponse], status_code=status.HTTP_200_OK)
 @inject
-async def list_zones_by_venue(
+async def customer_list_zones_by_venue(
     venue_id: int,
     pagination: Annotated[PaginationParams, Query()],
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
@@ -102,9 +102,9 @@ async def list_zones_by_venue(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.get("/zones/{zone_id}", response_model=ZoneResponse, status_code=status.HTTP_200_OK)
+@customer_router.get("/zones/{zone_id}", response_model=ZoneResponse, status_code=status.HTTP_200_OK)
 @inject
-async def get_zone(
+async def customer_get_zone(
     zone_id: int,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
@@ -115,9 +115,9 @@ async def get_zone(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@admin_router.post("/zones/{zone_id}/seats", response_model=SeatResponse, status_code=status.HTTP_201_CREATED)
+@manager_router.post("/zones/{zone_id}/seats", response_model=SeatResponse, status_code=status.HTTP_201_CREATED)
 @inject
-async def create_seat(
+async def manager_create_seat(
     zone_id: int,
     seat_data: SeatCreate,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
@@ -131,9 +131,9 @@ async def create_seat(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
-@admin_router.post("/zones/{zone_id}/seats/batch", response_model=list[SeatResponse], status_code=status.HTTP_201_CREATED)
+@manager_router.post("/zones/{zone_id}/seats/batch", response_model=list[SeatResponse], status_code=status.HTTP_201_CREATED)
 @inject
-async def create_seats_batch(
+async def manager_create_seats_batch(
     zone_id: int,
     batch_data: SeatBatchCreateRequest,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
@@ -147,9 +147,9 @@ async def create_seats_batch(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
-@router.get("/zones/{zone_id}/seats", response_model=Page[SeatResponse], status_code=status.HTTP_200_OK)
+@customer_router.get("/zones/{zone_id}/seats", response_model=Page[SeatResponse], status_code=status.HTTP_200_OK)
 @inject
-async def list_seats_by_zone(
+async def customer_list_seats_by_zone(
     zone_id: int,
     pagination: Annotated[PaginationParams, Query()],
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
@@ -161,9 +161,9 @@ async def list_seats_by_zone(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.get("/seats/{seat_id}", response_model=SeatResponse, status_code=status.HTTP_200_OK)
+@customer_router.get("/seats/{seat_id}", response_model=SeatResponse, status_code=status.HTTP_200_OK)
 @inject
-async def get_seat(
+async def customer_get_seat(
     seat_id: int,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):

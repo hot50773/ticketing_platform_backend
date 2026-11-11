@@ -1,6 +1,3 @@
-"""Route guards. Admin routers take get_current_manager / require_admin as a
-router-level dependency; declare AnyManager or Customer as a parameter when the
-route needs the caller's id."""
 from typing import Annotated
 
 from dependency_injector.wiring import Provide, inject
