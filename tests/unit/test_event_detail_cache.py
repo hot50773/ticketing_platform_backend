@@ -1,4 +1,3 @@
-"""Event detail cache: the soft-expiry read path and the rebuild after each write."""
 from datetime import timedelta
 
 import pytest

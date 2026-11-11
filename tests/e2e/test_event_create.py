@@ -1,4 +1,3 @@
-"""Creating an event clones the venue's layout into EventZone / EventSeat."""
 import pytest
 from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient

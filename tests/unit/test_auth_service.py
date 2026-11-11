@@ -1,4 +1,3 @@
-"""AuthService: customer and manager log-in, Google sign-in and token checks, without a database."""
 from datetime import timedelta
 
 import jwt

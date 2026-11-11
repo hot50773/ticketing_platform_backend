@@ -1,4 +1,3 @@
-"""Reading, updating, publishing and deleting an event."""
 from datetime import timedelta
 
 import pytest

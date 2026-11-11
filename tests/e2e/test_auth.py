@@ -1,4 +1,3 @@
-"""Accounts and permissions end to end: Google sign-in, manager log-in, admin, route guards."""
 import asyncio
 from datetime import timedelta
 

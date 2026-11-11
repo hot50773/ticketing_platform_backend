@@ -1,4 +1,3 @@
-"""Translation between Manager ORM rows and their API schemas."""
 from app.models import Manager
 from app.schemas import Page
 from app.schemas.manager import ManagerResponse

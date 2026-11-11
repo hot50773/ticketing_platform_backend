@@ -1,4 +1,3 @@
-"""Shared LIMIT/OFFSET helper for repository list queries."""
 from typing import TypeVar
 
 from sqlalchemy import func, select

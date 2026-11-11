@@ -1,4 +1,3 @@
-"""Translation between Customer ORM rows and their API schemas."""
 from app.models import Customer
 from app.schemas.customer import CustomerResponse
 

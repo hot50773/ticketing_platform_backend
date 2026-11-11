@@ -1,8 +1,3 @@
-"""Venue / Zone / Seat CRD coverage.
-
-The event and booking suites were removed with the old flows: they are to be
-rewritten TDD-style once the acceptance criteria are agreed.
-"""
 import pytest
 from httpx import AsyncClient
 from sqlmodel import select

@@ -1,4 +1,3 @@
-"""Admin-only: adding, listing and (de)activating manager accounts."""
 from typing import Annotated
 
 from dependency_injector.wiring import Provide, inject

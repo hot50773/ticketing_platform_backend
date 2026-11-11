@@ -1,4 +1,3 @@
-"""EventLayoutService unit tests: ordering guarantees around the layout rules."""
 import pytest
 
 from app.exceptions import EntityNotFoundError, EventPublishedError, SeatOccupiedError

@@ -1,4 +1,3 @@
-"""Worker entry point"""
 from taskiq import TaskiqEvents, TaskiqState
 
 from app.containers import Container

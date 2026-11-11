@@ -1,4 +1,3 @@
-"""ManagerService and email normalisation."""
 import pytest
 from pydantic import ValidationError
 

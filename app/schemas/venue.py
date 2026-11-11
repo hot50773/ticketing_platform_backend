@@ -1,7 +1,3 @@
-"""API contracts for the Venue aggregate (Venue / Zone / Seat).
-
-Field names follow the ORM models (`col`, `name`).
-"""
 from datetime import datetime
 
 from sqlmodel import SQLModel, Field

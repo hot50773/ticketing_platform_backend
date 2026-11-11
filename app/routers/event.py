@@ -1,9 +1,3 @@
-"""Event CRUD API.
-
-Domain errors raised by the Service are translated to HTTP status codes by the
-exception handlers registered in `app.main`, so handlers stay free of
-try/except boilerplate.
-"""
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status

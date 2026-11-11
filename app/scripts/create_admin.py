@@ -1,7 +1,3 @@
-"""Creates an admin account. Admins cannot be created over the API.
-
-    uv run python -m app.scripts.create_admin --name Root --email root@example.com
-"""
 import argparse
 import asyncio
 import getpass

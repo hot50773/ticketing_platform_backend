@@ -8,6 +8,7 @@ On top of the global commenting rules:
 - Don't explain what a technique is (FOR SHARE, lazy load, a partial index); if official docs cover it, delete it.
 - TODO / FIXME, cross-references, section headers and API-contract notes are fine.
 - `.claude/hooks/check_redundant_comments.py` only catches literal restatements; everything else is on you.
+- No docstring or comment at the top of a `.py` file; start with the imports. Alembic migrations are the exception.
 
 ## Routers
 

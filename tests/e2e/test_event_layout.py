@@ -1,4 +1,3 @@
-"""Creating zones, editing zone profiles, and syncing a zone's seat layout."""
 import pytest
 from httpx import AsyncClient
 from sqlmodel import select
