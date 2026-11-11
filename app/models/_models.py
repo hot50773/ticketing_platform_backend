@@ -17,7 +17,7 @@ class Customer(TableBase, table=True):
     email: str = Field(unique=True)
     # Customers only sign in with Google; NULL for one from before Google sign-in
     google_sub: str | None = Field(default=None, unique=True)
-
+    # TODO: 移除資料庫中，EMAIL LOWER CASE 相關的 constraint
     __table_args__ = (CheckConstraint(EMAIL_IS_LOWERCASE, name="ck_customer_email_lowercase"),)
 
 
@@ -31,10 +31,6 @@ class Manager(TableBase, table=True):
 
     __table_args__ = (CheckConstraint(EMAIL_IS_LOWERCASE, name="ck_manager_email_lowercase"),)
 
-# Soft-deletable tables use partial unique indexes (WHERE deleted_at IS NULL)
-# rather than UNIQUE constraints: a plain constraint would let a soft-deleted
-# row keep occupying its name / serial number forever, and would block the
-# EventSeat renumbering that Redis offsets depend on.
 SOFT_DELETE_ACTIVE = text("deleted_at IS NULL")
 
 # Relationships are declared lazy="raise" on purpose. The default ("select")
@@ -110,13 +106,6 @@ class Event(SoftDeletable, TableBase, table=True):
     __table_args__ = ({"comment": "活動，例如：演唱會、研討會"},)
 
 
-# -----
-# ＶTODO
-#  - 需修改 EventZone 和 EventSeat 的 Model，所有資訊都要複製，不要直接參考 Zone 和 Seat
-#   - V Event 新增欄位：is_active
-#   - V EventZone 新增欄位：ZoneName original_zone_id；移除欄位：zone_id
-#   - V EventSeat 新增欄位：row col SerialNumber original_seat_id；移除欄位：seat_id
-# -----
 class EventZone(SoftDeletable, TableBase, table=True):
     __tablename__ = "event_zone"
     event_id: int = Field(foreign_key="event.id")

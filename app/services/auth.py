@@ -1,8 +1,3 @@
-"""Who the caller is: manager password log-in, customer Google sign-in and token checks.
-
-Customers and managers live in separate tables, so one email can be both.
-Customers have no password: Google sign-in is their only way in.
-"""
 import asyncio
 from typing import Callable, Protocol
 
@@ -30,7 +25,7 @@ from app.schemas.customer import CustomerCreateInternal
 INVALID_CREDENTIALS_MSG = "Incorrect email or password"
 INVALID_TOKEN_MSG = "Invalid or expired token"
 
-
+# TODO: 實作 Google Verify 邏輯
 class GoogleVerifier(Protocol):
     async def verify(self, token: str) -> GoogleIdentityInternal:
         ...

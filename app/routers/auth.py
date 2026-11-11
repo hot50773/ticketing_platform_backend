@@ -1,5 +1,3 @@
-"""Log-in. Customers only sign in with Google; managers only with a password.
-They are separate tables, so the same email can be both."""
 from typing import Annotated
 
 from dependency_injector.wiring import Provide, inject
@@ -16,7 +14,7 @@ from app.services.customer import CustomerService
 router = APIRouter(prefix="/auth", tags=["auth"])
 admin_router = APIRouter(prefix="/admin/auth", tags=["auth"])
 
-
+# FIXME: 每一個 api func 名稱要能看得出來，是 customer 前台使用的 api func 還是後台 manager 使用的 api func
 @router.post("/google", response_model=TokenResponse, status_code=status.HTTP_200_OK)
 @inject
 async def login_with_google(

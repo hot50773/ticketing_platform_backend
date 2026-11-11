@@ -6,11 +6,10 @@ import jwt
 from app.libs.clock.functional import now_utc
 
 ALGORITHM = "HS256"
-# Both tables count ids from 1, so `aud` is what keeps customer 1 from passing as manager 1.
 CUSTOMER_AUDIENCE = "customer"
 MANAGER_AUDIENCE = "manager"
 
-
+# FIXME: exceptions should be in app.exceptions, not here.
 class InvalidTokenError(Exception):
     """Malformed, forged or expired."""
 
@@ -18,10 +17,8 @@ class InvalidTokenError(Exception):
 class WrongAudienceError(InvalidTokenError):
     """A valid token issued to the other kind of account."""
 
-
+# FIXME: 應該可以拆成 CustomerAccessTokenCodec 和 ManagerAccessTokenCodec 之類的(Single Responsibility OO)
 class AccessTokenCodec:
-    """Signs and reads the account id. Whether the account may still act is the caller's call."""
-
     def __init__(self, secret_key: str, expire_minutes: int):
         self._secret_key = secret_key
         self._expire = timedelta(minutes=expire_minutes)
