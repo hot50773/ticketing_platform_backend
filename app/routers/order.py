@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query, status
 from dependency_injector.wiring import inject, Provide
 
 from app.containers import Container
-from app.routers._auth import Customer, AnyManager
+from app.routers._auth import AnyManager, Customer, get_current_manager
 from app.services.order import OrderService
 from app.schemas import Page, PaginationParams
 from app.schemas.order import (
@@ -22,7 +22,9 @@ from app.schemas.order import (
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
-admin_router = APIRouter(prefix="/admin/orders", tags=["orders"])
+admin_router = APIRouter(
+    prefix="/admin/orders", tags=["orders"], dependencies=[Depends(get_current_manager)]
+)
 
 # --------------------------------------------------------------------------- #
 # Order

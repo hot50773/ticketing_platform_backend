@@ -6,20 +6,21 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.containers import Container
 from app.enums import ManagerRole
-from app.routers._auth import Admin
+from app.routers._auth import require_admin
 from app.schemas import Page
 from app.schemas.manager import ManagerCreate
 from app.schemas.manager import ManagerListParams, ManagerResponse
 from app.services.manager import ManagerService
 
-admin_router = APIRouter(prefix="/admin/managers", tags=["managers"])
+admin_router = APIRouter(
+    prefix="/admin/managers", tags=["managers"], dependencies=[Depends(require_admin)]
+)
 
 
 @admin_router.post("", response_model=ManagerResponse, status_code=status.HTTP_201_CREATED)
 @inject
 async def create_manager(
     payload: ManagerCreate,
-    _: Admin,
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):
     return await manager_service.create_manager(payload, ManagerRole.MANAGER)
@@ -29,7 +30,6 @@ async def create_manager(
 @inject
 async def list_managers(
     params: Annotated[ManagerListParams, Query()],
-    _: Admin,
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):
     """Lists admins and managers one page at a time, optionally of one role."""
@@ -40,7 +40,6 @@ async def list_managers(
 @inject
 async def deactivate_manager(
     manager_id: int,
-    _: Admin,
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):
     """Locks the manager out at once, including tokens already issued."""
@@ -51,7 +50,6 @@ async def deactivate_manager(
 @inject
 async def activate_manager(
     manager_id: int,
-    _: Admin,
     manager_service: ManagerService = Depends(Provide[Container.manager_service]),
 ):
     return await manager_service.set_manager_active(manager_id, is_active=True)

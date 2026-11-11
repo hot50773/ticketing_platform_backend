@@ -9,7 +9,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from app.cache.event_detail import EventDetailCache
-from app.exceptions import EVENT_NOT_FOUND_MSG, EntityNotFoundError
 from app.repositories.event import EventRepository
 from app.schemas import Page, PaginationParams
 from app.schemas.event import (
@@ -76,16 +75,18 @@ class EventLayoutService:
         await self._event_detail_cache.sync(detail)
 
     async def list_event_zone_seats(
-        self,
-        event_id: int,
-        event_zone_id: int,
-        pagination: PaginationParams,
-        include_unpublished: bool = False,
+        self, event_id: int, event_zone_id: int, pagination: PaginationParams
     ) -> Page[EventSeatResponse]:
-        """One page of a zone's seat layout with each seat's current status."""
+        """One page of a published event's zone layout with each seat's current status."""
         async with self._repository.load(event_id) as event_aggr:
-            if not (include_unpublished or event_aggr.state.is_active):
-                raise EntityNotFoundError(EVENT_NOT_FOUND_MSG.format(event_id=event_id))
+            self._validator.validate_publicly_visible(event_aggr.state)
+            page = await event_aggr.zone_seats(event_zone_id, pagination)
+            return self._mapper.to_seat_page(page)
+
+    async def list_event_zone_seats_for_manager(
+        self, event_id: int, event_zone_id: int, pagination: PaginationParams
+    ) -> Page[EventSeatResponse]:
+        async with self._repository.load(event_id) as event_aggr:
             page = await event_aggr.zone_seats(event_zone_id, pagination)
             return self._mapper.to_seat_page(page)
 

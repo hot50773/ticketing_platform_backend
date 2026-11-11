@@ -33,7 +33,6 @@ from app.cache.event_layout import EventLayoutCache
 from app.cache.event_list import EventListCache
 from app.constants import MAX_CACHE_PAGES
 from app.enums import EventListMode, PageSize
-from app.exceptions import EVENT_NOT_FOUND_MSG, EntityNotFoundError
 from app.libs.clock.functional import now_utc
 from app.repositories.event import EventRepository
 from app.schemas import Page, PaginationParamsInternal, PaginationParams
@@ -130,8 +129,7 @@ class EventService:
         await self._event_list_cache.refresh_all(pages)
 
     async def get_event(self, event_id: int, background_tasks: "BackgroundTasks") -> EventDetailResponse:
-        """Returns a published event with its zones (seat counts only, not the seats).
-        A draft reads as missing: its name, date and prices are not public yet."""
+        """Returns a published event with its zones (seat counts only, not the seats)."""
         cached = await self._event_detail_cache.get(event_id)
 
         if cached:
@@ -140,8 +138,7 @@ class EventService:
             result = cached.data
         else:
             result = await self._get_event(event_id)
-            if not result.is_active:
-                raise EntityNotFoundError(EVENT_NOT_FOUND_MSG.format(event_id=event_id))
+            self._validator.validate_publicly_visible(result)
             background_tasks.add_task(self._event_detail_cache.set, result)
         return result
 

@@ -8,7 +8,9 @@ from collections.abc import Callable
 from datetime import datetime
 
 from app.exceptions import (
+    EVENT_NOT_FOUND_MSG,
     ActiveOrdersExistError,
+    EntityNotFoundError,
     SeatOccupiedError,
     EventHasNoZoneError,
     EventPublishedError,
@@ -17,6 +19,7 @@ from app.exceptions import (
 )
 from app.libs.clock.functional import now_utc
 from app.schemas.event import (
+    EventDetailResponse,
     EventHoldingTime,
     EventOrderStatsInternal,
     EventStateInternal,
@@ -54,6 +57,12 @@ class EventRuleValidator:
                 f"Event {event_state.id} is published; "
                 f"this operation is only allowed while it is unpublished"
             )
+
+    @staticmethod
+    def validate_publicly_visible(event: EventStateInternal | EventDetailResponse) -> None:
+        """A draft reads as missing on public routes: its name, date and prices are not public yet."""
+        if not event.is_active:
+            raise EntityNotFoundError(EVENT_NOT_FOUND_MSG.format(event_id=event.id))
 
     @staticmethod
     def validate_publishable(event_zones: list[EventZoneWithSeatInternal]) -> None:

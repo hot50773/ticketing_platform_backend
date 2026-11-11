@@ -19,6 +19,9 @@ from app.jobs.scheduler import start_scheduler
 from app.workers import broker, schedule_source
 
 logger = logging.getLogger(__name__)
+audit_logger = logging.getLogger("app.audit")
+
+READ_ONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 # Instantiate container and wire it at module level so injection decorators resolve correctly
 container = Container()
@@ -66,6 +69,18 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs"
 )
+
+@app.middleware("http")
+async def _audit_manager_writes(request: Request, call_next):
+    response = await call_next(request)
+    manager = getattr(request.state, "manager", None)
+    if manager is not None and request.method not in READ_ONLY_METHODS:
+        audit_logger.info(
+            "manager=%s role=%s %s %s -> %s",
+            manager.id, manager.role, request.method, request.url.path, response.status_code,
+        )
+    return response
+
 
 # 3. Map domain exceptions to HTTP status codes in one place
 @app.exception_handler(EntityNotFoundError)

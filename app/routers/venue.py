@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from dependency_injector.wiring import inject, Provide
 from app.containers import Container
-from app.routers._auth import AnyManager
+from app.routers._auth import get_current_manager
 from app.services.venue import VenueService
 from app.schemas import Page, PaginationParams
 from app.schemas.venue import (
@@ -18,14 +18,13 @@ from app.schemas.venue import (
 from app.exceptions import EntityNotFoundError, EntityConflictError, ActiveEventsExistError
 
 router = APIRouter(tags=["venues"])
-admin_router = APIRouter(prefix="/admin", tags=["venues"])
+admin_router = APIRouter(prefix="/admin", tags=["venues"], dependencies=[Depends(get_current_manager)])
 
 
 @admin_router.post("/venues", response_model=VenueResponse, status_code=status.HTTP_201_CREATED)
 @inject
 async def create_venue(
     venue_data: VenueCreate,
-    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     return await venue_service.create_venue(venue_data)
@@ -58,7 +57,6 @@ async def get_venue(
 @inject
 async def delete_venue(
     venue_id: int,
-    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """
@@ -79,7 +77,6 @@ async def delete_venue(
 async def create_zone(
     venue_id: int,
     zone_data: ZoneBase,
-    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a new zone under a venue."""
@@ -123,7 +120,6 @@ async def get_zone(
 async def create_seat(
     zone_id: int,
     seat_data: SeatCreate,
-    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a single seat under a zone."""
@@ -140,7 +136,6 @@ async def create_seat(
 async def create_seats_batch(
     zone_id: int,
     batch_data: SeatBatchCreateRequest,
-    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Batch creates multiple seats under a zone."""

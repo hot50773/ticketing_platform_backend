@@ -98,7 +98,7 @@ async def test_seats_of_a_draft_are_hidden_from_the_public_but_not_from_managers
         await a_service(FakeEventRepository()).list_event_zone_seats(1, 10, PaginationParams())
 
     repo = FakeEventRepository()
-    await a_service(repo).list_event_zone_seats(1, 10, PaginationParams(), include_unpublished=True)
+    await a_service(repo).list_event_zone_seats_for_manager(1, 10, PaginationParams())
     assert "zone_seats" in repo.calls
 
 

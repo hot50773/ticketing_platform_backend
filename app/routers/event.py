@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from dependency_injector.wiring import inject, Provide
 
 from app.containers import Container
-from app.routers._auth import AnyManager
+from app.routers._auth import get_current_manager
 from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
 from app.schemas import Page, PaginationParams
@@ -29,7 +29,9 @@ from app.schemas.event import (
 )
 
 router = APIRouter(prefix="/events", tags=["events"])
-admin_router = APIRouter(prefix="/admin/events", tags=["events"])
+admin_router = APIRouter(
+    prefix="/admin/events", tags=["events"], dependencies=[Depends(get_current_manager)]
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -39,7 +41,6 @@ admin_router = APIRouter(prefix="/admin/events", tags=["events"])
 @inject
 async def create_event(
     payload: EventCreate,
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Creates an unpublished event and clones the venue's zone/seat layout."""
@@ -49,7 +50,6 @@ async def create_event(
 @inject
 async def list_all_events(
     pagination: Annotated[PaginationParams, Query()],
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Lists non-deleted events, one page at a time."""
@@ -82,7 +82,6 @@ async def get_event(
 @inject
 async def get_event_for_manager(
     event_id: int,
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Gets an event with its zones, drafts included."""
@@ -95,7 +94,6 @@ async def update_event_profile(
     event_id: int,
     payload: EventProfileUpdate,
     background_tasks: BackgroundTasks,
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Updates the event's name and description."""
@@ -107,7 +105,6 @@ async def update_event_profile(
 async def update_event_holding_time(
     event_id: int,
     payload: EventHoldingTimeUpdate,
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Updates the event's holding time. Rejected once the event is published."""
@@ -119,7 +116,6 @@ async def update_event_holding_time(
 async def publish_event(
     event_id: int,
     background_tasks: BackgroundTasks,
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Puts the event on sale. Rejected while any zone is still unpriced."""
@@ -131,7 +127,6 @@ async def publish_event(
 async def unpublish_event(
     event_id: int,
     background_tasks: BackgroundTasks,
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Takes the event off sale. Rejected once any order exists."""
@@ -143,7 +138,6 @@ async def unpublish_event(
 async def delete_event(
     event_id: int,
     background_tasks: BackgroundTasks,
-    _: AnyManager,
     event_service: EventService = Depends(Provide[Container.event_service]),
 ):
     """Soft-deletes an event. Rejected when confirmed orders exist."""
@@ -162,7 +156,6 @@ async def delete_event(
 async def create_event_zone(
     event_id: int,
     payload: EventZoneCreate,
-    _: AnyManager,
     layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
 ):
     """Creates a zone and its seats. Rejected once the event is published."""
@@ -180,7 +173,6 @@ async def update_event_zone_profile(
     event_zone_id: int,
     payload: EventZoneProfileUpdate,
     background_tasks: BackgroundTasks,
-    _: AnyManager,
     layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
 ):
     """Updates a zone's name and ticket price."""
@@ -215,13 +207,10 @@ async def list_event_zone_seats_for_manager(
     event_id: int,
     event_zone_id: int,
     pagination: Annotated[PaginationParams, Query()],
-    _: AnyManager,
     layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
 ):
     """Same as the public route, drafts included."""
-    return await layout_service.list_event_zone_seats(
-        event_id, event_zone_id, pagination, include_unpublished=True
-    )
+    return await layout_service.list_event_zone_seats_for_manager(event_id, event_zone_id, pagination)
 
 
 @admin_router.patch(
@@ -234,7 +223,6 @@ async def replace_event_zone_seats(
     event_id: int,
     event_zone_id: int,
     payload: EventSeatLayoutUpdate,
-    _: AnyManager,
     layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
 ):
     """Replaces the zone's seat layout wholesale. Rejected once published."""

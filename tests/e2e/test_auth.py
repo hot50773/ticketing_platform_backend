@@ -327,3 +327,17 @@ async def test_deleting_an_order_records_which_manager_did_it(
     async with container.db().get_async_session() as session:
         order = await session.scalar(select(Order).where(Order.id == order_id))
     assert (order.deleted_by_manager_id, order.comment) == (manager_id, "duplicate")
+
+
+async def test_manager_writes_are_audited_with_their_outcome(
+    anonymous_client: AsyncClient, manager_headers, caplog
+):
+    manager = await manager_headers()
+
+    with caplog.at_level("INFO", logger="app.audit"):
+        await anonymous_client.get(f"{API}/admin/events", headers=manager)
+        await anonymous_client.post(f"{API}/admin/events/9999/publish", headers=manager)
+
+    audit = [record.getMessage() for record in caplog.records if record.name == "app.audit"]
+    assert len(audit) == 1
+    assert audit[0].endswith("POST /api/v1/admin/events/9999/publish -> 404")
