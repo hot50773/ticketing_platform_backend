@@ -1,5 +1,7 @@
 import asyncio
 
+import cachecontrol
+import requests
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 
@@ -12,12 +14,13 @@ class GoogleIdTokenVerifier:
 
     def __init__(self, client_id: str):
         self._client_id = client_id
-        self._request = google_requests.Request()
+        # google-auth refetches Google's signing certs on every verify; this honours their Cache-Control
+        self._request = google_requests.Request(session=cachecontrol.CacheControl(requests.Session()))
 
     async def verify(self, token: str) -> GoogleIdentityInternal:
         if not self._client_id:
             raise AuthenticationError("Google sign-in is not configured")
-        # verify_oauth2_token is blocking: it may fetch Google's signing certs
+        # verify_oauth2_token is blocking: a cache miss fetches the certs over HTTPS
         try:
             claims = await asyncio.to_thread(
                 id_token.verify_oauth2_token, token, self._request, self._client_id
