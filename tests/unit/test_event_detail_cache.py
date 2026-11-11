@@ -104,15 +104,26 @@ async def test_miss_reads_the_db_and_fills_the_cache_after_the_response():
     assert cache.stored[1].name == "World Tour"
 
 
-async def test_miss_on_an_unpublished_event_caches_nothing():
+async def test_an_unpublished_event_reads_as_missing_and_caches_nothing():
+    """A draft's name, date and prices are not public yet."""
     repo = FakeEventRepository(is_active=False)
     cache = FakeEventDetailCache(repo.calls, entry=None)
     background = FakeBackgroundTasks()
 
-    result = await a_service(repo, cache).get_event(1, background)
+    with pytest.raises(EntityNotFoundError):
+        await a_service(repo, cache).get_event(1, background)
+
+    assert background.added == []
+
+
+async def test_managers_read_drafts_straight_from_the_database():
+    repo = FakeEventRepository(is_active=False)
+    cache = FakeEventDetailCache(repo.calls, entry=None)
+
+    result = await a_service(repo, cache).get_event_for_manager(1)
 
     assert result.is_active is False
-    assert background.added == []
+    assert repo.calls == ["load", "layout"]
 
 
 async def test_stale_detail_of_an_unpublished_event_is_dropped_instead_of_rebuilt():

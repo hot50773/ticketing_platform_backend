@@ -28,6 +28,7 @@ from app.schemas import PaginationParams
 from app.schemas.event import EventProfileUpdate
 
 API = "/api/v1/events"
+ADMIN_API = "/api/v1/admin/events"
 SETTLE = 0.3  # long enough for the admin request to reach the lock and queue
 
 
@@ -44,7 +45,7 @@ async def in_flight_booking(container: Container, seeded_event: dict):
     )
     session.add(
         Order(
-            user_id=seeded_event["user_id"],
+            customer_id=seeded_event["customer_id"],
             event_id=seeded_event["event_id"],
             checkout_amount=1500,
             status=OrderStatus.PENDING,
@@ -86,9 +87,9 @@ async def test_delete_cannot_miss_an_order_committed_mid_flight(
     seat for is destroyed."""
     event_id = seeded_event["event_id"]
     await assert_admin_call_waits_then_conflicts(
-        async_client.delete(f"{API}/{event_id}"), in_flight_booking
+        async_client.delete(f"{ADMIN_API}/{event_id}"), in_flight_booking
     )
-    assert (await async_client.get(f"{API}/{event_id}")).status_code == 200
+    assert (await async_client.get(f"{ADMIN_API}/{event_id}")).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,7 @@ async def test_unpublish_cannot_miss_an_order_committed_mid_flight(
     async_client: AsyncClient, seeded_event: dict, in_flight_booking
 ):
     await assert_admin_call_waits_then_conflicts(
-        async_client.post(f"{API}/{seeded_event['event_id']}/unpublish"),
+        async_client.post(f"{ADMIN_API}/{seeded_event['event_id']}/unpublish"),
         in_flight_booking,
     )
 
@@ -105,8 +106,7 @@ async def test_unpublish_cannot_miss_an_order_committed_mid_flight(
 async def test_reads_never_queue_behind_a_writer(
     async_client: AsyncClient, container: Container, seeded_event: dict
 ):
-    """load() deliberately takes no lock: a browsing customer must not wait
-    behind an admin edit."""
+    """load() deliberately takes no lock: a reader must not wait behind an admin edit."""
     session = container.db().get_async_session()
     await session.__aenter__()
     try:
@@ -114,7 +114,7 @@ async def test_reads_never_queue_behind_a_writer(
             select(Event).where(Event.id == seeded_event["event_id"]).with_for_update()
         )
         resp = await asyncio.wait_for(
-            async_client.get(f"{API}/{seeded_event['event_id']}"), timeout=2.0
+            async_client.get(f"{ADMIN_API}/{seeded_event['event_id']}"), timeout=2.0
         )
         assert resp.status_code == 200
     finally:

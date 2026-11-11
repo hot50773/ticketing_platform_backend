@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 
 from redis import RedisError
 
-from app.exceptions import EntityNotFoundError
+from app.exceptions import ORDER_NOT_FOUND_MSG, EntityConflictError, EntityNotFoundError
 from app.libs.clock.functional import now_utc
-from app.models import Event, EventZone, Order
+from app.models import Customer, Event, EventZone, Order, Manager
 from app.schemas import Page
 from app.enums import OrderStatus, PaymentStatus, SeatStatus
 from app.schemas.event import (
@@ -28,6 +28,8 @@ from app.schemas.event import (
     SeatPositionInternal,
     SeatPriceInternal,
 )
+from app.schemas.customer import CustomerCreateInternal
+from app.schemas.manager import ManagerCreateInternal
 from app.schemas.order import (
     OrderCreateInternal,
     OrderStateInternal,
@@ -413,7 +415,7 @@ def an_order(pricing: OrderCreateInternal) -> Order:
     """The row the factory's create() would have written for this pricing."""
     return Order(
         id=1,
-        user_id=1,
+        customer_id=pricing.customer_id,
         event_id=1,
         checkout_amount=pricing.checkout_amount,
         status=OrderStatus.PENDING,
@@ -443,6 +445,7 @@ class FakeOrderAggregate:
             status=self.order.status,
             payment_status=self.order.payment_status,
             payment_deadline=self.order.payment_deadline,
+            customer_id=self.order.customer_id,
         )
 
     async def cancel_order(self) -> None:
@@ -453,8 +456,9 @@ class FakeOrderAggregate:
         self.calls.append("check_and_release_seats")
         self.released_seat_ids = [t.event_seat_id for t in self.pricing.tickets]
 
-    async def soft_delete_cascade(self, payload) -> None:
+    async def soft_delete_cascade(self, payload, manager_id: int | None = None) -> None:
         self.calls.append("soft_delete_cascade")
+        self.order.deleted_by_manager_id = manager_id
         self.order.deleted_at = now_utc()
 
     def with_tickets(self) -> OrderWithTicketsInternal:
@@ -558,7 +562,7 @@ class FakeOrderRepository:
         self.aggregate = FakeOrderAggregate(
             self.calls,
             OrderCreateInternal(
-                user_id=1,
+                customer_id=1,
                 comment=None,
                 tickets=[
                     OrderTicketPricingInternal(event_seat_id=1, amount=1500),
@@ -577,6 +581,112 @@ class FakeOrderRepository:
         yield self.factory
 
     @asynccontextmanager
-    async def load_for_release(self, order_id: int):
+    async def load_for_release(self, order_id: int, customer_id: int | None = None):
         self.calls.append("load_for_release")
-        yield self.aggregate
+        yield self._owned_by(order_id, customer_id)
+
+    @asynccontextmanager
+    async def load(self, order_id: int, customer_id: int | None = None):
+        self.calls.append("load")
+        yield self._owned_by(order_id, customer_id)
+
+    @asynccontextmanager
+    async def load_for_update(self, order_id: int, customer_id: int | None = None):
+        self.calls.append("load_for_update")
+        yield self._owned_by(order_id, customer_id)
+
+    def _owned_by(self, order_id: int, customer_id: int | None) -> FakeOrderAggregate:
+        """Mirrors the repository's WHERE customer_id = ..."""
+        if customer_id is not None and self.aggregate.order.customer_id != customer_id:
+            raise EntityNotFoundError(ORDER_NOT_FOUND_MSG.format(order_id=order_id))
+        return self.aggregate
+
+
+class _FakeAccountTable:
+    """An in-memory table keyed by id, shared by the customer and manager fakes."""
+
+    model: type
+
+    def __init__(self):
+        self.rows: dict[int, object] = {}
+
+    def add(self, **fields):
+        row = self.model(id=len(self.rows) + 1, created_at=START, updated_at=START, **fields)
+        self.rows[row.id] = row
+        return row
+
+    async def _create(self, data):
+        if await self.get_by_email(data.email):
+            raise EntityConflictError(data.email)
+        return self.add(**data.model_dump())
+
+    async def get_by_email(self, email: str):
+        return next((row for row in self.rows.values() if row.email == email), None)
+
+
+class FakeCustomerRepository(_FakeAccountTable):
+    model = Customer
+
+    async def create_customer(self, data: CustomerCreateInternal) -> Customer:
+        return await self._create(data)
+
+    async def get_by_google_sub(self, google_sub: str) -> Customer | None:
+        return next((row for row in self.rows.values() if row.google_sub == google_sub), None)
+
+    async def link_google_sub(self, customer_id: int, google_sub: str) -> Customer:
+        if await self.get_by_google_sub(google_sub):
+            raise EntityConflictError(google_sub)
+        customer = self.rows[customer_id]
+        customer.google_sub = google_sub
+        return customer
+
+
+class FakeManagerRepository(_FakeAccountTable):
+    model = Manager
+
+    async def create_manager(self, data: ManagerCreateInternal) -> Manager:
+        return await self._create(data)
+
+    async def update_password(self, manager_id: int, hashed_password: str) -> None:
+        self.rows[manager_id].hashed_password = hashed_password
+
+    async def get_manager(self, manager_id: int) -> Manager:
+        if manager_id not in self.rows:
+            raise EntityNotFoundError(f"Manager with id {manager_id} not found")
+        return self.rows[manager_id]
+
+    async def set_active(self, manager_id: int, is_active: bool) -> Manager:
+        manager = await self.get_manager(manager_id)
+        manager.is_active = is_active
+        return manager
+
+
+class FakeGoogleIdTokenVerifier:
+    """Accepts any token and hands back `identity`; `error` makes it reject."""
+
+    def __init__(self, identity=None, error: Exception | None = None):
+        self._identity = identity
+        self._error = error
+
+    async def verify(self, token: str):
+        if self._error:
+            raise self._error
+        return self._identity
+
+
+class FakeLoginAttemptLimiter:
+    """LoginAttemptLimiter without Redis: a counter per key, no window."""
+
+    def __init__(self, max_failures: int = 5):
+        self.max_failures = max_failures
+        self.failures: dict[tuple[str, str], int] = {}
+
+    async def is_blocked(self, client_ip: str, email: str) -> bool:
+        return self.failures.get((client_ip, email), 0) >= self.max_failures
+
+    async def record_failure(self, client_ip: str, email: str) -> None:
+        key = (client_ip, email)
+        self.failures[key] = self.failures.get(key, 0) + 1
+
+    async def reset(self, client_ip: str, email: str) -> None:
+        self.failures.pop((client_ip, email), None)

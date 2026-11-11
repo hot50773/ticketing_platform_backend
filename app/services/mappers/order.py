@@ -30,7 +30,7 @@ class OrderSchemaMapper:
             id=order.id,
             created_at=order.created_at,
             updated_at=order.updated_at,
-            user_id=order.user_id,
+            customer_id=order.customer_id,
             event_id=order.event_id,
             status=order.status,
             payment_status=order.payment_status,

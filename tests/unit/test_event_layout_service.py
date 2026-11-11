@@ -1,7 +1,7 @@
 """EventLayoutService unit tests: ordering guarantees around the layout rules."""
 import pytest
 
-from app.exceptions import EventPublishedError, SeatOccupiedError
+from app.exceptions import EntityNotFoundError, EventPublishedError, SeatOccupiedError
 from app.schemas.event import EventSeatLayout, EventSeatLayoutUpdate, EventZoneCreate
 from app.services.event_layout import EventLayoutService
 from app.services.mappers import EventSchemaMapper
@@ -85,10 +85,21 @@ async def test_zone_profile_edit_is_allowed_while_published():
 async def test_seat_listing_does_not_take_the_write_lock():
     from app.schemas import PaginationParams
 
-    repo = FakeEventRepository()
+    repo = FakeEventRepository(is_active=True)
     await a_service(repo).list_event_zone_seats(1, 10, PaginationParams())
 
     assert repo.calls == ["load", "zone_seats"]
+
+
+async def test_seats_of_a_draft_are_hidden_from_the_public_but_not_from_managers():
+    from app.schemas import PaginationParams
+
+    with pytest.raises(EntityNotFoundError):
+        await a_service(FakeEventRepository()).list_event_zone_seats(1, 10, PaginationParams())
+
+    repo = FakeEventRepository()
+    await a_service(repo).list_event_zone_seats(1, 10, PaginationParams(), include_unpublished=True)
+    assert "zone_seats" in repo.calls
 
 
 # --------------------------------------------------------------------------- #

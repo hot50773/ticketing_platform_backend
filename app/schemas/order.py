@@ -40,7 +40,6 @@ class OrderCreate(SQLModel):
     the hold lasts. Prices are still snapshotted onto each OrderTicket, so a
     later reprice cannot change what the customer agreed to pay.
     """
-    user_id: int
     event_id: int
     comment: str | None = Field(default=None, max_length=500)
     event_seat_ids: EventSeatIds = Field(min_length=1)
@@ -55,7 +54,7 @@ class OrderPay(SQLModel):
 
 
 class OrderDelete(SQLModel):
-    """DELETE /orders/{order_id}.
+    """DELETE /admin/orders/{order_id}.
 
     A reason is required: soft-deleting an order is an operator action that
     someone will have to explain later, and the audit trail is worth more than
@@ -71,7 +70,7 @@ class OrderResponse(SQLModel, _TableMetaMixin):
     they move independently - a PENDING order can have a FAILED payment behind
     it and still be retried - so collapsing them into one field would lose the
     distinction the pay and cancel rules turn on."""
-    user_id: int
+    customer_id: int
     event_id: int
     status: OrderStatus
     payment_status: PaymentStatus
@@ -115,7 +114,7 @@ class OrderCreateInternal(SQLModel):
     payment_deadline is required here though the column is nullable: NULL is
     only for rows created before the hold window existed.
     """
-    user_id: int
+    customer_id: int
     comment: str | None
     tickets: list[OrderTicketPricingInternal]
     checkout_amount: int
@@ -133,6 +132,7 @@ class OrderStateInternal(SQLModel):
     status: OrderStatus
     payment_status: PaymentStatus
     payment_deadline: datetime | None
+    customer_id: int
 
 
 class OrderTicketInternal(SQLModel):

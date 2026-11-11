@@ -1,1 +1,1 @@
-from ._models import User, Venue, Zone, Seat, Order, OrderTicket, Event, EventZone, EventSeat
+from ._models import Customer, Manager, Venue, Zone, Seat, Order, OrderTicket, Event, EventZone, EventSeat

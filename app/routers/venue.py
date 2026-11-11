@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from dependency_injector.wiring import inject, Provide
 from app.containers import Container
+from app.routers._auth import AnyManager
 from app.services.venue import VenueService
 from app.schemas import Page, PaginationParams
 from app.schemas.venue import (
@@ -17,15 +18,16 @@ from app.schemas.venue import (
 from app.exceptions import EntityNotFoundError, EntityConflictError, ActiveEventsExistError
 
 router = APIRouter(tags=["venues"])
+admin_router = APIRouter(prefix="/admin", tags=["venues"])
 
 
-@router.post("/venues", response_model=VenueResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post("/venues", response_model=VenueResponse, status_code=status.HTTP_201_CREATED)
 @inject
 async def create_venue(
     venue_data: VenueCreate,
+    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
-    """Creates a new venue."""
     return await venue_service.create_venue(venue_data)
 
 
@@ -52,10 +54,11 @@ async def get_venue(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.delete("/venues/{venue_id}", status_code=status.HTTP_200_OK)
+@admin_router.delete("/venues/{venue_id}", status_code=status.HTTP_200_OK)
 @inject
 async def delete_venue(
     venue_id: int,
+    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """
@@ -71,11 +74,12 @@ async def delete_venue(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.post("/venues/{venue_id}/zones", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post("/venues/{venue_id}/zones", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
 @inject
 async def create_zone(
     venue_id: int,
     zone_data: ZoneBase,
+    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a new zone under a venue."""
@@ -114,11 +118,12 @@ async def get_zone(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.post("/zones/{zone_id}/seats", response_model=SeatResponse, status_code=status.HTTP_201_CREATED)
+@admin_router.post("/zones/{zone_id}/seats", response_model=SeatResponse, status_code=status.HTTP_201_CREATED)
 @inject
 async def create_seat(
     zone_id: int,
     seat_data: SeatCreate,
+    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a single seat under a zone."""
@@ -130,11 +135,12 @@ async def create_seat(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
-@router.post("/zones/{zone_id}/seats/batch", response_model=list[SeatResponse], status_code=status.HTTP_201_CREATED)
+@admin_router.post("/zones/{zone_id}/seats/batch", response_model=list[SeatResponse], status_code=status.HTTP_201_CREATED)
 @inject
 async def create_seats_batch(
     zone_id: int,
     batch_data: SeatBatchCreateRequest,
+    _: AnyManager,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Batch creates multiple seats under a zone."""

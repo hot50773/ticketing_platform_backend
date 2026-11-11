@@ -6,15 +6,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from app.containers import Container
 from app.exceptions import (
+    AuthenticationError,
     BusinessRuleViolationError,
     EntityConflictError,
     EntityNotFoundError,
     InvalidEventTimeError,
+    PermissionDeniedError,
+    TooManyLoginAttemptsError,
 )
-from app.routers.event import router as events_router
-from app.routers.order import router as orders_router
-from app.routers.venue import router as venue_router
-from app.routers.user import router as user_router
+from app.routers import auth, event, manager, order, venue
 from app.jobs.scheduler import start_scheduler
 from app.workers import broker, schedule_source
 
@@ -73,6 +73,23 @@ async def _handle_not_found(_request: Request, exc: EntityNotFoundError):
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
+@app.exception_handler(AuthenticationError)
+async def _handle_unauthenticated(_request: Request, exc: AuthenticationError):
+    return JSONResponse(
+        status_code=401, content={"detail": str(exc)}, headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+@app.exception_handler(PermissionDeniedError)
+async def _handle_forbidden(_request: Request, exc: PermissionDeniedError):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(TooManyLoginAttemptsError)
+async def _handle_too_many_logins(_request: Request, exc: TooManyLoginAttemptsError):
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+
 @app.exception_handler(InvalidEventTimeError)
 async def _handle_invalid_time(_request: Request, exc: InvalidEventTimeError):
     return JSONResponse(status_code=422, content={"detail": str(exc)})
@@ -89,10 +106,11 @@ async def _handle_rule_violation(_request: Request, exc: BusinessRuleViolationEr
 
 
 # 4. Register Routers
-app.include_router(user_router, prefix="/api/v1")
-app.include_router(events_router, prefix="/api/v1")
-app.include_router(orders_router, prefix="/api/v1")
-app.include_router(venue_router, prefix="/api/v1")
+for module in (auth, event, order, venue):
+    app.include_router(module.router, prefix="/api/v1")
+# Every route only managers may call lives under /admin.
+for module in (auth, manager, event, order, venue):
+    app.include_router(module.admin_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

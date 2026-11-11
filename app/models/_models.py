@@ -3,15 +3,33 @@ from datetime import datetime
 from sqlalchemy import CheckConstraint, DateTime, Index, text
 from sqlmodel import Field, Relationship
 
-from app.enums import SeatStatus, OrderStatus, PaymentStatus
+from app.enums import SeatStatus, OrderStatus, PaymentStatus, ManagerRole
 from ._shared import TableBase, SoftDeletable
 
 
-class User(TableBase, table=True):
-    __tablename__ = "user"
+# Emails are stored lower-cased so the plain UNIQUE constraint is case-insensitive
+EMAIL_IS_LOWERCASE = "email = lower(email)"
+
+
+class Customer(TableBase, table=True):
+    __tablename__ = "customer"
+    name: str
+    email: str = Field(unique=True)
+    # Customers only sign in with Google; NULL for one from before Google sign-in
+    google_sub: str | None = Field(default=None, unique=True)
+
+    __table_args__ = (CheckConstraint(EMAIL_IS_LOWERCASE, name="ck_customer_email_lowercase"),)
+
+
+class Manager(TableBase, table=True):
+    __tablename__ = "manager"
     name: str
     email: str = Field(unique=True)
     hashed_password: str
+    role: ManagerRole
+    is_active: bool = Field(default=True, sa_column_kwargs={"server_default": "true"})
+
+    __table_args__ = (CheckConstraint(EMAIL_IS_LOWERCASE, name="ck_manager_email_lowercase"),)
 
 # Soft-deletable tables use partial unique indexes (WHERE deleted_at IS NULL)
 # rather than UNIQUE constraints: a plain constraint would let a soft-deleted
@@ -153,7 +171,7 @@ class EventSeat(SoftDeletable, TableBase, table=True):
 
 class Order(SoftDeletable, TableBase, table=True):
     __tablename__ = "order"
-    user_id: int = Field(foreign_key="user.id")
+    customer_id: int = Field(foreign_key="customer.id")
     event_id: int = Field(foreign_key="event.id")
     checkout_amount: int = Field(sa_column_kwargs={"comment":"結帳金額"})
     status: OrderStatus = Field(sa_column_kwargs={"server_default": OrderStatus.PENDING, "comment": "訂單完成狀態"})
@@ -163,6 +181,10 @@ class Order(SoftDeletable, TableBase, table=True):
         sa_column_kwargs={"comment":"付款截止期限"}
     )
     comment: str | None = Field(sa_column_kwargs={"comment":"訂單備註"})
+    # NULL when the system released an expired cart
+    deleted_by_manager_id: int | None = Field(
+        default=None, foreign_key="manager.id", sa_column_kwargs={"comment": "刪除訂單的管理者"}
+    )
 
     tickets: list["OrderTicket"] = Relationship(
         back_populates="order", sa_relationship_kwargs=LAZY_RAISE

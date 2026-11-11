@@ -34,7 +34,7 @@ class SeatBase(SQLModel):
 
 
 class SeatCreate(SeatBase):
-    """POST /zones/{zone_id}/seats.
+    """POST /admin/zones/{zone_id}/seats.
 
     `serial_number` is NOT accepted: the backend numbers seats per zone,
     starting at 0 and continuing from the zone's current maximum.
@@ -43,7 +43,7 @@ class SeatCreate(SeatBase):
 
 
 class SeatBatchCreateRequest(SQLModel):
-    """POST /zones/{zone_id}/seats/batch payload wrapper.
+    """POST /admin/zones/{zone_id}/seats/batch payload wrapper.
 
     Seats are numbered in the order given.
     """

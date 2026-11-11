@@ -42,7 +42,7 @@ def a_pricing(*seats):
 
 
 def payload(event_seat_ids: list[int], event_id: int = EVENT_ID):
-    return OrderCreate(user_id=1, event_id=event_id, event_seat_ids=event_seat_ids)
+    return OrderCreate(event_id=event_id, event_seat_ids=event_seat_ids)
 
 
 # --------------------------------------------------------------------------- #
@@ -116,6 +116,7 @@ def order_state(
         status=status,
         payment_status=payment_status,
         payment_deadline=NOW + timedelta(minutes=10),
+        customer_id=1,
     )
 
 
@@ -154,6 +155,7 @@ def expired_state(payment_status: PaymentStatus) -> OrderStateInternal:
         status=OrderStatus.PENDING,
         payment_status=payment_status,
         payment_deadline=NOW - timedelta(seconds=1),
+        customer_id=1,
     )
 
 

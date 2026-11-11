@@ -223,7 +223,7 @@ async def test_clone_is_atomic(container: Container, venue_template: dict, monke
 async def test_post_event_returns_detail(async_client: AsyncClient, venue_template: dict):
     """C1."""
     resp = await async_client.post(
-        "/api/v1/events",
+        "/api/v1/admin/events",
         json={
             "name": "World Tour 2026",
             "description": "Mega Live Concert",
@@ -248,7 +248,7 @@ async def test_post_event_normalises_timezone(
     end_local = start_local + timedelta(hours=3)
 
     resp = await async_client.post(
-        "/api/v1/events",
+        "/api/v1/admin/events",
         json={
             "name": "Taipei Night",
             "description": "d",
@@ -270,7 +270,7 @@ async def test_post_event_normalises_timezone(
 async def test_post_event_requires_description(async_client: AsyncClient, venue_template: dict):
     """C3."""
     resp = await async_client.post(
-        "/api/v1/events",
+        "/api/v1/admin/events",
         json={
             "name": "No Description",
             "start_at": FUTURE_START.isoformat(),
@@ -285,7 +285,7 @@ async def test_post_event_requires_description(async_client: AsyncClient, venue_
 async def test_post_event_rejects_end_before_start(async_client: AsyncClient, venue_template: dict):
     """C4: InvalidEventTimeError maps to 422."""
     resp = await async_client.post(
-        "/api/v1/events",
+        "/api/v1/admin/events",
         json={
             "name": "Backwards",
             "description": "d",
@@ -302,7 +302,7 @@ async def test_post_event_rejects_past_start(async_client: AsyncClient, venue_te
     """C4: a start in the past is also 422."""
     past = now_utc() - timedelta(days=1)
     resp = await async_client.post(
-        "/api/v1/events",
+        "/api/v1/admin/events",
         json={
             "name": "Yesterday",
             "description": "d",
@@ -318,7 +318,7 @@ async def test_post_event_rejects_past_start(async_client: AsyncClient, venue_te
 async def test_post_event_unknown_venue_is_404(async_client: AsyncClient):
     """C5."""
     resp = await async_client.post(
-        "/api/v1/events",
+        "/api/v1/admin/events",
         json={
             "name": "Nowhere",
             "description": "d",
@@ -336,7 +336,7 @@ async def test_post_event_ignores_client_supplied_zones(
 ):
     """C6: the layout always comes from the template, never from the payload."""
     resp = await async_client.post(
-        "/api/v1/events",
+        "/api/v1/admin/events",
         json={
             "name": "Sneaky",
             "description": "d",

@@ -7,7 +7,7 @@ from sqlmodel import SQLModel
 
 # Load environment configuration and trigger model registration
 from app.config import settings
-from app.models import User
+import app.models  # noqa: F401
 
 # Interpret the config file for Python logging.
 config = context.config

@@ -39,16 +39,19 @@ class OrderRepository:
     # Aggregate access
     # ----------------------------------------------------------------------- #
     @asynccontextmanager
-    async def load(self, order_id: int) -> AsyncIterator[OrderAggregate]:
+    async def load(self, order_id: int, customer_id: int | None = None) -> AsyncIterator[OrderAggregate]:
         async with self.session_factory() as session:
             try:
-                yield OrderAggregate(session, await self._get_and_check_order(session, order_id))
+                order = await self._get_and_check_order(session, order_id, customer_id)
+                yield OrderAggregate(session, order)
             except BaseException:
                 await session.rollback()
                 raise
 
     @asynccontextmanager
-    async def load_for_update(self, order_id: int) -> AsyncIterator[OrderAggregate]:
+    async def load_for_update(
+        self, order_id: int, customer_id: int | None = None
+    ) -> AsyncIterator[OrderAggregate]:
         """Write access. Locks the order row with `FOR UPDATE`, commits on a
         clean exit and rolls back explicitly on any exception.
 
@@ -57,7 +60,7 @@ class OrderRepository:
         """
         async with self.session_factory() as session:
             try:
-                order = await self._get_and_check_order(session, order_id, for_update=True)
+                order = await self._get_and_check_order(session, order_id, customer_id, for_update=True)
                 yield OrderAggregate(session, order)
                 await session.commit()
             except BaseException:
@@ -65,11 +68,13 @@ class OrderRepository:
                 raise
 
     @asynccontextmanager
-    async def load_for_release(self, order_id: int) -> AsyncIterator[OrderAggregate]:
+    async def load_for_release(
+        self, order_id: int, customer_id: int | None = None
+    ) -> AsyncIterator[OrderAggregate]:
         """Shared, as in load_for_create(): bookings never queue behind a release."""
         async with self.session_factory() as session:
             try:
-                order = await self._get_and_check_order(session, order_id, for_update=True)
+                order = await self._get_and_check_order(session, order_id, customer_id, for_update=True)
                 event = await self._lock_event_for_share(session, order.event_id)
                 yield OrderAggregate(session, order, EventAggregate(session, event))
                 await session.commit()
@@ -104,9 +109,13 @@ class OrderRepository:
     # ----------------------------------------------------------------------- #
     # Collection queries
     # ----------------------------------------------------------------------- #
-    async def get_orders(self, pagination: PaginationParams) -> Page[Order]:
+    async def get_orders(self, pagination: PaginationParams, customer_id: int) -> Page[Order]:
         async with self.session_factory() as session:
-            stmt = select(Order).where(Order.deleted_at == None).order_by(Order.id)
+            stmt = (
+                select(Order)
+                .where(Order.deleted_at == None, Order.customer_id == customer_id)
+                .order_by(Order.id)
+            )
             return await paginate(session, stmt, pagination, Order)
 
     # ----------------------------------------------------------------------- #
@@ -114,14 +123,17 @@ class OrderRepository:
     # ----------------------------------------------------------------------- #
     @staticmethod
     async def _get_and_check_order(
-        session: AsyncSession, order_id: int, for_update: bool = False
+        session: AsyncSession, order_id: int, customer_id: int | None, for_update: bool = False
     ) -> Order:
+        """With customer_id, someone else's order reads as missing - before any row is locked."""
         stmt = (
             select(Order)
             .where(Order.id == order_id)
             .where(Order.deleted_at == None)
             .options(TICKET_DETAIL_LOADER)
         )
+        if customer_id is not None:
+            stmt = stmt.where(Order.customer_id == customer_id)
         if for_update:
             # Only the order row is locked. selectinload issues its own SELECT
             # for the tickets, which FOR UPDATE would not cover anyway - and

@@ -221,7 +221,7 @@ async def test_blocked_unpublish_never_touches_the_cache():
 
 @pytest.mark.asyncio
 async def test_reads_do_not_take_the_write_lock():
-    repo = FakeEventRepository()
+    repo = FakeEventRepository(is_active=True)
     await a_service(repo).get_event(1, FakeBackgroundTasks())
 
     assert repo.calls == ["load", "layout"]

@@ -132,3 +132,18 @@ EVENT_SEAT_OCCUPIED_MSG = (
 EVENT_SEAT_NOT_FOUND_MSG = "EventSeat(s) {event_seat_ids} not found in event {event_id}"
 ORDER_NOT_FOUND_MSG = "Order with id {order_id} not found"
 ORDER_NOT_DELETABLE_MSG = "Order #{order_id} cannot be deleted"
+
+
+class AuthenticationError(Exception):
+    """Raised when the caller cannot be identified: bad credentials or a bad token (maps to HTTP 401)."""
+    pass
+
+
+class PermissionDeniedError(Exception):
+    """Raised when the caller is identified but their role may not do this (maps to HTTP 403)."""
+    pass
+
+
+class TooManyLoginAttemptsError(Exception):
+    """Raised when a client keeps failing to log in to one account (maps to HTTP 429)."""
+    pass

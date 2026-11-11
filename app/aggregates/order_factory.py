@@ -58,7 +58,7 @@ class OrderAggregateFactory:
         per-order, so the Redis hold is what has to.
         """
         order = Order(
-            user_id=self._payload.user_id,
+            customer_id=self._payload.customer_id,
             event_id=self._event.event.id,
             checkout_amount=pricing.checkout_amount,
             payment_deadline=pricing.payment_deadline,

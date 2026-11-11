@@ -14,6 +14,11 @@ class SeatStatus(enum.StrEnum):
     # LOCKED = "LOCKED" # 暫時鎖定
     RESERVED = "RESERVED" # 已預訂
 
+class ManagerRole(enum.StrEnum):
+    ADMIN = "ADMIN" # 新增 manager
+    MANAGER = "MANAGER" # 編輯場地與活動，由 admin 建立
+
+
 class OrderStatus(enum.StrEnum):
     PENDING = "PENDING"
     CANCELLED = "CANCELLED"

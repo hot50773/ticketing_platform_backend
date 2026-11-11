@@ -6,21 +6,28 @@ from dependency_injector import containers, providers
 from app.cache.event_detail import EventDetailCache
 from app.cache.event_layout import EventLayoutCache
 from app.cache.event_list import EventListCache
+from app.cache.login_attempts import LoginAttemptLimiter
+from app.config import settings
 from app.db.postgres import Database
 from app.db.redis import RedisClient
+from app.libs.security import AccessTokenCodec, GoogleIdTokenVerifier, PasswordHasher
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.event import EventRepository
 from app.repositories.order import OrderRepository
-from app.repositories.user import UserRepository
+from app.repositories.customer import CustomerRepository
+from app.repositories.manager import ManagerRepository
 from app.repositories.venue import VenueRepository
+from app.services.auth import AuthService
 from app.services.calculators.order import OrderCalculator
 from app.services.event import EventService
 from app.services.event_layout import EventLayoutService
-from app.services.mappers.user import UserSchemaMapper
+from app.services.mappers.customer import CustomerSchemaMapper
+from app.services.mappers.manager import ManagerSchemaMapper
 from app.services.order import OrderService, UnimplementedPaymentGateway
 from app.services.mappers import EventSchemaMapper
 from app.services.mappers.order import OrderSchemaMapper
-from app.services.user import UserService
+from app.services.customer import CustomerService
+from app.services.manager import ManagerService
 from app.services.validators import EventRuleValidator
 from app.services.validators.order import OrderValidator
 from app.services.venue import VenueService
@@ -57,8 +64,13 @@ class Container(containers.DeclarativeContainer):
     redis_client = providers.Singleton(RedisClient)
 
     # Repositories
-    user_repository = providers.Factory(
-        UserRepository,
+    customer_repository = providers.Factory(
+        CustomerRepository,
+        session_factory=async_session_factory
+    )
+
+    manager_repository = providers.Factory(
+        ManagerRepository,
         session_factory=async_session_factory
     )
 
@@ -81,6 +93,12 @@ class Container(containers.DeclarativeContainer):
     event_layout_cache = providers.Factory(EventLayoutCache, redis_client=redis_client)
     event_list_cache = providers.Factory(EventListCache, redis_client=redis_client)
     event_detail_cache = providers.Factory(EventDetailCache, redis_client=redis_client)
+    login_attempt_limiter = providers.Factory(
+        LoginAttemptLimiter,
+        redis_client=redis_client,
+        max_failures=settings.login_max_failures,
+        window_seconds=settings.login_failure_window_seconds,
+    )
 
     # Domain rule validators (pure, no I/O)
     event_rule_validator = providers.Factory(EventRuleValidator)
@@ -89,16 +107,43 @@ class Container(containers.DeclarativeContainer):
     # Pricing and deadlines, kept out of the services (also pure, no I/O)
     order_calculator = providers.Factory(OrderCalculator)
 
+    # Credentials
+    password_hasher = providers.Singleton(PasswordHasher)
+    access_token_codec = providers.Singleton(
+        AccessTokenCodec,
+        secret_key=settings.jwt_secret_key,
+        expire_minutes=settings.access_token_expire_minutes,
+    )
+    google_id_token_verifier = providers.Singleton(
+        GoogleIdTokenVerifier, client_id=settings.google_client_id
+    )
+
     # ORM -> schema translation, kept out of the services
-    user_schema_mapper = providers.Factory(UserSchemaMapper)
+    customer_schema_mapper = providers.Factory(CustomerSchemaMapper)
+    manager_schema_mapper = providers.Factory(ManagerSchemaMapper)
     event_schema_mapper = providers.Factory(EventSchemaMapper)
     order_schema_mapper = providers.Factory(OrderSchemaMapper)
 
     # Services
-    user_service = providers.Factory(
-        UserService,
-        user_repository=user_repository,
-        user_schema_mapper=user_schema_mapper
+    customer_service = providers.Factory(
+        CustomerService,
+        customer_repository=customer_repository,
+        customer_schema_mapper=customer_schema_mapper,
+    )
+    manager_service = providers.Factory(
+        ManagerService,
+        manager_repository=manager_repository,
+        manager_schema_mapper=manager_schema_mapper,
+        password_hasher=password_hasher,
+    )
+    auth_service = providers.Factory(
+        AuthService,
+        customer_repository=customer_repository,
+        manager_repository=manager_repository,
+        password_hasher=password_hasher,
+        token_codec=access_token_codec,
+        google_verifier=google_id_token_verifier,
+        login_attempt_limiter=login_attempt_limiter,
     )
     venue_service = providers.Factory(
         VenueService,

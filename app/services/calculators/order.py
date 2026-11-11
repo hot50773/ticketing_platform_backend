@@ -32,7 +32,7 @@ class OrderCalculator:
         self._now = clock
 
     def calculate_order_price(
-        self, payload: OrderCreate, event_seats_pricing: EventSeatsPricingInternal
+        self, customer_id: int, payload: OrderCreate, event_seats_pricing: EventSeatsPricingInternal
     ) -> OrderCreateInternal:
         """Prices every seat at its zone's price, in the order requested.
 
@@ -56,6 +56,6 @@ class OrderCalculator:
             tickets=tickets,
             checkout_amount=sum(ticket.amount for ticket in tickets),
             payment_deadline=self._now() + self._payment_window,
-            user_id=payload.user_id,
+            customer_id=customer_id,
             comment=payload.comment,
         )

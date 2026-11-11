@@ -20,6 +20,7 @@ from app.schemas.event import EventListCacheFieldInternal
 from app.services.mappers import EventSchemaMapper
 
 API = "/api/v1/events"
+ADMIN_API = "/api/v1/admin/events"
 
 
 async def seed_events(container: Container, venue_id: int, selling: int) -> list[int]:
@@ -195,7 +196,7 @@ async def test_profile_change_shows_up_after_the_soft_expiry(
 ):
     (event_id,) = await seed_events(container, seeded_venue_and_seats["venue_id"], selling=1)
     await container.event_service()._rebuild_selling_events_cache()
-    response = await async_client.patch(f"{API}/{event_id}/profile", json={"name": "Renamed", "description": "d"})
+    response = await async_client.patch(f"{ADMIN_API}/{event_id}/profile", json={"name": "Renamed", "description": "d"})
     assert response.status_code == 200
     await make_cache_stale(container)
 

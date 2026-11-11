@@ -38,7 +38,7 @@ class EventHoldingTime(SQLModel):
 
 
 class EventCreate(EventHoldingTime):
-    """POST /events.
+    """POST /admin/events.
 
     Zones and seats are not part of the payload: they are cloned from the
     venue's Zone/Seat template. Prices start unset and must be filled in
@@ -50,13 +50,13 @@ class EventCreate(EventHoldingTime):
 
 
 class EventProfileUpdate(SQLModel):
-    """PATCH /events/{event_id}/profile."""
+    """PATCH /admin/events/{event_id}/profile."""
     name: str = Field(max_length=100)
     description: str = Field(max_length=1000)
 
 
 class EventHoldingTimeUpdate(EventHoldingTime):
-    """PATCH /events/{event_id}/holding_time. Rejected once published."""
+    """PATCH /admin/events/{event_id}/holding_time. Rejected once published."""
     pass
 
 
@@ -90,7 +90,7 @@ SeatLayout = Annotated[list[EventSeatLayout], AfterValidator(_reject_duplicate_p
 
 
 class EventZoneCreate(SQLModel):
-    """POST /events/{event_id}/event_zones. Rejected once published.
+    """POST /admin/events/{event_id}/event_zones. Rejected once published.
 
     This zone has no venue template, so its seats are numbered from 1 in
     payload order.
@@ -134,7 +134,7 @@ class EventZoneCreate(SQLModel):
 
 
 class EventZoneProfileUpdate(SQLModel):
-    """PATCH /events/{event_id}/event_zones/{event_zone_id}/profile.
+    """PATCH /admin/events/{event_id}/event_zones/{event_zone_id}/profile.
 
     Both name and price stay editable after the event is published.
     """
@@ -143,7 +143,7 @@ class EventZoneProfileUpdate(SQLModel):
 
 
 class EventSeatLayoutUpdate(SQLModel):
-    """PATCH /events/{event_id}/event_zones/{event_zone_id}/seats.
+    """PATCH /admin/events/{event_id}/event_zones/{event_zone_id}/seats.
 
     Full-replacement semantics: `seats` is the desired final layout of the
     zone, keyed on `(row, col)`. Positions absent from the payload are

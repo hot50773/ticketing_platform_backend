@@ -100,6 +100,7 @@ class OrderAggregate:
             status=self._order.status,
             payment_status=self._order.payment_status,
             payment_deadline=self._order.payment_deadline,
+            customer_id=self._order.customer_id,
         )
 
     # ----------------------------------------------------------------------- #
@@ -189,7 +190,7 @@ class OrderAggregate:
             [ticket.event_seat_id for ticket in self._order.tickets]
         )
 
-    async def soft_delete_cascade(self, payload: OrderDelete) -> None:
+    async def soft_delete_cascade(self, payload: OrderDelete, manager_id: int | None = None) -> None:
         """Soft-deletes the order and its tickets.
 
         Tickets go too, because the partial unique index on
@@ -204,13 +205,14 @@ class OrderAggregate:
         now = now_utc()
         order = self._order
         await self._delete_tickets(now=now, tickets=order.tickets)
-        await self._delete_order(now=now, order=order, payload=payload)
+        await self._delete_order(now=now, order=order, payload=payload, manager_id=manager_id)
         await self._apply(order)
 
     @staticmethod
-    async def _delete_order(now: datetime, order: Order, payload: OrderDelete):
+    async def _delete_order(now: datetime, order: Order, payload: OrderDelete, manager_id: int | None):
         order.comment = payload.reason
         order.deleted_at = now
+        order.deleted_by_manager_id = manager_id
 
     @staticmethod
     async def _delete_tickets(now: datetime, tickets: list[OrderTicket]):

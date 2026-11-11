@@ -6,10 +6,10 @@ from httpx import AsyncClient, ASGITransport
 from sqlmodel import text
 
 from app.containers import Container
-from app.enums import OrderStatus, PaymentStatus
+from app.enums import ManagerRole, OrderStatus, PaymentStatus
 from app.libs.clock.functional import now_utc
 from app.main import app
-from app.models import Order, Seat, User, Venue, Zone
+from app.models import Customer, Order, Seat, Manager, Venue, Zone
 from app.schemas.event import EventCreate
 
 
@@ -47,7 +47,7 @@ async def clean_state(container: Container) -> AsyncGenerator[None, None]:
         await session.execute(
             text(
                 'TRUNCATE TABLE order_ticket, "order", event_seat, event_zone, '
-                'event, seat, zone, venue, "user" RESTART IDENTITY CASCADE;'
+                'event, seat, zone, venue, customer, manager RESTART IDENTITY CASCADE;'
             )
         )
         await session.commit()
@@ -57,17 +57,59 @@ async def clean_state(container: Container) -> AsyncGenerator[None, None]:
     yield
 
 
+async def _save(container: Container, account: Customer | Manager) -> int:
+    async with container.db().get_async_session() as session:
+        session.add(account)
+        await session.commit()
+        return account.id
+
+
 @pytest.fixture
-async def async_client() -> AsyncGenerator[AsyncClient, None]:
-    """Async HTTP client fixture simulating client requests against FastAPI application."""
+def customer_headers(container: Container):
+    """Creates a customer and returns a bearer header for it."""
+
+    async def _headers(email: str = "customer@example.com") -> dict[str, str]:
+        customer_id = await _save(container, Customer(name="customer", email=email))
+        return {"Authorization": f"Bearer {container.access_token_codec().encode_customer(customer_id)}"}
+
+    return _headers
+
+
+@pytest.fixture
+def manager_headers(container: Container):
+    """Creates a manager account of the given role and returns a bearer header for it."""
+
+    async def _headers(role: ManagerRole = ManagerRole.MANAGER, email: str | None = None) -> dict[str, str]:
+        account = Manager(
+            name=role.lower(), email=email or f"{role.lower()}@example.com", hashed_password="x", role=role
+        )
+        manager_id = await _save(container, account)
+        return {"Authorization": f"Bearer {container.access_token_codec().encode_manager(manager_id)}"}
+
+    return _headers
+
+
+@pytest.fixture
+async def anonymous_client() -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
 
 @pytest.fixture
+async def async_client(manager_headers) -> AsyncGenerator[AsyncClient, None]:
+    """Signed in as a manager, since most tests drive the event editing routes."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport, base_url="http://test",
+        headers=await manager_headers(email="fixture-manager@example.com"),
+    ) as client:
+        yield client
+
+
+@pytest.fixture
 async def seeded_venue_and_seats(container: Container) -> dict:
-    """A venue with 2 zones and 2 seats each, plus two users."""
+    """A venue with 2 zones and 2 seats each, plus two customers."""
     db = container.db()
     async with db.get_async_session() as session:
         venue = Venue(name="Taipei Arena", description="Standard Arena", address="Taipei City")
@@ -86,9 +128,9 @@ async def seeded_venue_and_seats(container: Container) -> dict:
         session.add_all([seat_a1, seat_a2, seat_b1, seat_b2])
         await session.flush()
 
-        user_1 = User(name="Alice", email="alice@example.com", hashed_password="x")
-        user_2 = User(name="Bob", email="bob@example.com", hashed_password="x")
-        session.add_all([user_1, user_2])
+        customer_1 = Customer(name="Alice", email="alice@example.com")
+        customer_2 = Customer(name="Bob", email="bob@example.com")
+        session.add_all([customer_1, customer_2])
         await session.flush()
         await session.commit()
 
@@ -102,7 +144,7 @@ async def seeded_venue_and_seats(container: Container) -> dict:
                 "b1": seat_b1.id,
                 "b2": seat_b2.id,
             },
-            "users": [user_1.id, user_2.id],
+            "customers": [customer_1.id, customer_2.id],
         }
 
 
@@ -131,7 +173,7 @@ async def seeded_event(container: Container, seeded_venue_and_seats: dict) -> di
         "event_id": event_id,
         "zone_ids": {zone.zone.name: zone.zone.id for zone in layout.zones},
         "start_at": start_at,
-        "user_id": seeded_venue_and_seats["users"][0],
+        "customer_id": seeded_venue_and_seats["customers"][0],
         "venue_id": seeded_venue_and_seats["venue_id"],
     }
 
@@ -140,12 +182,12 @@ async def seeded_event(container: Container, seeded_venue_and_seats: dict) -> di
 def place_order(container: Container):
     """Inserts an order for an event, so the "no active order" rule can be exercised."""
 
-    async def _place(event_id: int, user_id: int, soft_deleted: bool = False,
+    async def _place(event_id: int, customer_id: int, soft_deleted: bool = False,
                      status: OrderStatus = OrderStatus.PENDING) -> int:
         db = container.db()
         async with db.get_async_session() as session:
             order = Order(
-                user_id=user_id,
+                customer_id=customer_id,
                 event_id=event_id,
                 checkout_amount=0,
                 status=status,

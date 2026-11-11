@@ -1,5 +1,6 @@
 import os
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # tests/conftest.py sets this before importing app.config: `settings` below is
@@ -22,6 +23,15 @@ class Settings(BaseSettings):
     redis_port: int = 16379
     redis_url: str = "redis://localhost:16379/0"
     
+    # No default: a secret baked into the code signs tokens anyone can forge
+    # HS256 is only as strong as its key; RFC 7518 asks for at least 256 bits
+    jwt_secret_key: str = Field(min_length=32)
+    access_token_expire_minutes: int = 60
+    # Empty turns Google sign-in off
+    google_client_id: str = ""
+    login_max_failures: int = 5
+    login_failure_window_seconds: int = 900
+
     enable_cron_jobs: bool = True
     db_echo: bool = False  # SQLAlchemy statement logging; noisy, keep off by default
 

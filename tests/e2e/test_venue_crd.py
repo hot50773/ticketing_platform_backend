@@ -15,7 +15,7 @@ from app.models import Seat, Venue, Zone
 async def test_venue_zone_seat_crd_flow(async_client: AsyncClient):
     """Creating a venue, then a zone under it, then a seat under the zone."""
     venue_resp = await async_client.post(
-        "/api/v1/venues",
+        "/api/v1/admin/venues",
         json={
             "name": "Kaohsiung National Stadium",
             "description": "Main Southern Venue",
@@ -30,13 +30,13 @@ async def test_venue_zone_seat_crd_flow(async_client: AsyncClient):
     assert get_resp.json()["name"] == "Kaohsiung National Stadium"
 
     zone_resp = await async_client.post(
-        f"/api/v1/venues/{venue_id}/zones", json={"name": "ROCK_VIP"}
+        f"/api/v1/admin/venues/{venue_id}/zones", json={"name": "ROCK_VIP"}
     )
     assert zone_resp.status_code == 201
     zone_id = zone_resp.json()["id"]
 
     seat_resp = await async_client.post(
-        f"/api/v1/zones/{zone_id}/seats", json={"row": 1, "col": 1}
+        f"/api/v1/admin/zones/{zone_id}/seats", json={"row": 1, "col": 1}
     )
     assert seat_resp.status_code == 201
     assert seat_resp.json()["zone_id"] == zone_id
@@ -45,7 +45,7 @@ async def test_venue_zone_seat_crd_flow(async_client: AsyncClient):
     assert seat_resp.json()["serial_number"] == 0
 
     second = await async_client.post(
-        f"/api/v1/zones/{zone_id}/seats", json={"row": 1, "col": 2}
+        f"/api/v1/admin/zones/{zone_id}/seats", json={"row": 1, "col": 2}
     )
     assert second.json()["serial_number"] == 1
 
@@ -57,7 +57,7 @@ async def test_venue_cascade_soft_delete(
     """Deleting a venue soft-deletes its zones and seats too."""
     venue_id = seeded_venue_and_seats["venue_id"]
 
-    delete_resp = await async_client.delete(f"/api/v1/venues/{venue_id}")
+    delete_resp = await async_client.delete(f"/api/v1/admin/venues/{venue_id}")
     assert delete_resp.status_code == 200
 
     db = container.db()
@@ -83,7 +83,7 @@ async def test_create_seats_batch(async_client: AsyncClient, seeded_venue_and_se
     zone_id = seeded_venue_and_seats["zone_a_id"]
 
     resp = await async_client.post(
-        f"/api/v1/zones/{zone_id}/seats/batch",
+        f"/api/v1/admin/zones/{zone_id}/seats/batch",
         json={"seats": [{"row": 2, "col": 1}, {"row": 2, "col": 2}]},
     )
     assert resp.status_code == 201
@@ -100,7 +100,7 @@ async def test_client_supplied_serial_number_is_ignored(
     """serial_number is backend-owned: a client-sent value must not take effect."""
     zone_id = seeded_venue_and_seats["zone_a_id"]
     resp = await async_client.post(
-        f"/api/v1/zones/{zone_id}/seats",
+        f"/api/v1/admin/zones/{zone_id}/seats",
         json={"row": 9, "col": 9, "serial_number": 999},
     )
     assert resp.status_code == 201
@@ -113,7 +113,7 @@ async def test_create_seats_batch_rejects_empty_payload(
 ):
     """An empty seat list is a validation error, not a silent no-op."""
     zone_id = seeded_venue_and_seats["zone_a_id"]
-    resp = await async_client.post(f"/api/v1/zones/{zone_id}/seats/batch", json={"seats": []})
+    resp = await async_client.post(f"/api/v1/admin/zones/{zone_id}/seats/batch", json={"seats": []})
     assert resp.status_code == 422
 
 
@@ -123,15 +123,15 @@ async def test_soft_deleted_name_can_be_reused(async_client: AsyncClient):
     occupying its name - but a live duplicate is still rejected."""
     payload = {"name": "Arena", "description": "d", "address": "a"}
 
-    first = await async_client.post("/api/v1/venues", json=payload)
+    first = await async_client.post("/api/v1/admin/venues", json=payload)
     assert first.status_code == 201
 
-    duplicate = await async_client.post("/api/v1/venues", json=payload)
+    duplicate = await async_client.post("/api/v1/admin/venues", json=payload)
     assert duplicate.status_code == 409
 
-    assert (await async_client.delete(f"/api/v1/venues/{first.json()['id']}")).status_code == 200
+    assert (await async_client.delete(f"/api/v1/admin/venues/{first.json()['id']}")).status_code == 200
 
-    reused = await async_client.post("/api/v1/venues", json=payload)
+    reused = await async_client.post("/api/v1/admin/venues", json=payload)
     assert reused.status_code == 201
     assert reused.json()["id"] != first.json()["id"]
 
@@ -141,7 +141,7 @@ async def test_venue_requires_description(async_client: AsyncClient):
     """venue.description is NOT NULL, so the schema must reject a missing one
     with 422 rather than letting it reach the DB as an IntegrityError."""
     resp = await async_client.post(
-        "/api/v1/venues", json={"name": "No Description", "address": "a"}
+        "/api/v1/admin/venues", json={"name": "No Description", "address": "a"}
     )
     assert resp.status_code == 422
 
@@ -152,7 +152,7 @@ async def test_venue_list_pagination(async_client: AsyncClient):
     names = [f"Venue {i:02d}" for i in range(22)]
     for name in names:
         resp = await async_client.post(
-            "/api/v1/venues",
+            "/api/v1/admin/venues",
             json={"name": name, "description": "d", "address": "a"},
         )
         assert resp.status_code == 201

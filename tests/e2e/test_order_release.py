@@ -41,7 +41,7 @@ async def booked(container: Container, seeded_event: dict):
             )).scalar_one()
 
             order = Order(
-                user_id=seeded_event["user_id"],
+                customer_id=seeded_event["customer_id"],
                 event_id=event_id,
                 checkout_amount=1500,
                 status=OrderStatus.PENDING,
@@ -75,6 +75,7 @@ async def booked(container: Container, seeded_event: dict):
         "container": container,
         "event_id": event_id,
         "service": container.order_service(),
+        "customer_id": seeded_event["customer_id"],
     }
 
 
@@ -105,7 +106,7 @@ async def _row(container, model, row_id: int):
 async def test_a_cancelled_order_puts_its_seat_back_on_sale(booked):
     order_id, seat_id = await booked["book"]()
 
-    await booked["service"].cancel_order(order_id)
+    await booked["service"].cancel_order(order_id, booked["customer_id"])
 
     assert (await _row(booked["container"], Order, order_id)).status == OrderStatus.CANCELLED
     assert await _buyable(booked, seat_id)
@@ -131,7 +132,7 @@ async def test_a_failed_release_leaves_the_order_as_it_was(booked):
         await session.commit()
 
     with pytest.raises(SeatNotReleasableError):
-        await booked["service"].cancel_order(order_id)
+        await booked["service"].cancel_order(order_id, booked["customer_id"])
 
     assert (await _row(booked["container"], Order, order_id)).status == OrderStatus.PENDING
 
@@ -150,7 +151,7 @@ async def test_releasing_does_not_queue_behind_a_booking(booked):
             .with_for_update(read=True)
         )
         # A FOR UPDATE here would queue behind the booking and time out.
-        await asyncio.wait_for(booked["service"].cancel_order(order_id), timeout=3.0)
+        await asyncio.wait_for(booked["service"].cancel_order(order_id, booked["customer_id"]), timeout=3.0)
     finally:
         await booking.rollback()
         await booking.__aexit__(None, None, None)

@@ -76,14 +76,14 @@ class OrderService:
         self._mapper = order_schema_mapper
         self._order_expiration_scheduler = order_expiration_scheduler
 
-    async def create_order(self, payload: OrderCreate) -> OrderDetailResponse:
+    async def create_order(self, payload: OrderCreate, customer_id: int) -> OrderDetailResponse:
         locked_seats = None
         try:
             async with self._repository.load_for_create(payload) as order_aggr_factory:
                 self._validator.validate_event_orderable(order_aggr_factory.event_state)
                 seats_data = await order_aggr_factory.seats_pricing()
                 self._validator.validate_seats_input(payload, seats_data)
-                input_data = self._calculator.calculate_order_price(payload, seats_data)
+                input_data = self._calculator.calculate_order_price(customer_id, payload, seats_data)
 
                 await self._cache.check_and_lock_seats_atomic(seats_data)
                 locked_seats = seats_data
@@ -118,18 +118,18 @@ class OrderService:
         except RedisError:
             logger.exception(SEATS_STILL_LOCKED_MSG, event_id, stuck_seats)
 
-    async def list_orders(self, pagination: PaginationParams) -> Page[OrderResponse]:
-        """One page of non-deleted orders, headers only."""
-        page = await self._repository.get_orders(pagination)
+    async def list_orders(self, pagination: PaginationParams, customer_id: int) -> Page[OrderResponse]:
+        """One page of the customer's non-deleted orders, headers only."""
+        page = await self._repository.get_orders(pagination, customer_id)
         return self._mapper.to_order_page(page)
 
-    async def get_order(self, order_id: int) -> OrderDetailResponse:
+    async def get_order(self, order_id: int, customer_id: int) -> OrderDetailResponse:
         """Returns an order with its tickets and their seat coordinates."""
-        async with self._repository.load(order_id) as order_aggr:
+        async with self._repository.load(order_id, customer_id) as order_aggr:
             return self._mapper.to_order_detail(order_aggr.with_tickets())
 
-    async def cancel_order(self, order_id: int) -> OrderResponse:
-        async with self._repository.load_for_release(order_id) as order_aggr:
+    async def cancel_order(self, order_id: int, customer_id: int) -> OrderResponse:
+        async with self._repository.load_for_release(order_id, customer_id) as order_aggr:
             self._validator.validate_cancellable(order_aggr.state)
             order_data = order_aggr.with_tickets()
             await order_aggr.check_and_release_seats()
@@ -149,21 +149,21 @@ class OrderService:
         if order_data is not None:
             await self._release_cached_seats(order_data)
 
-    async def delete_order(self, order_id: int, payload: OrderDelete) -> None:
+    async def delete_order(self, order_id: int, payload: OrderDelete, manager_id: int) -> None:
         async with self._repository.load_for_release(order_id) as order_aggr:
             if not self._validator.check_deletable(order_aggr.state):
                 raise OrderNotDeletableError(ORDER_NOT_DELETABLE_MSG.format(order_id=order_id))
-            order_data = await self._release_and_soft_delete(order_aggr, payload)
+            order_data = await self._release_and_soft_delete(order_aggr, payload, manager_id)
 
         await self._release_cached_seats(order_data)
 
     @staticmethod
     async def _release_and_soft_delete(
-        order_aggr: OrderAggregate, payload: OrderDelete
+        order_aggr: OrderAggregate, payload: OrderDelete, manager_id: int | None = None
     ) -> OrderWithTicketsInternal:
         order_data = order_aggr.with_tickets()
         await order_aggr.check_and_release_seats()
-        await order_aggr.soft_delete_cascade(payload)
+        await order_aggr.soft_delete_cascade(payload, manager_id)
         return order_data
 
     async def _release_cached_seats(self, order_data: OrderWithTicketsInternal) -> None:
@@ -180,8 +180,10 @@ class OrderService:
             ],
         )
 
-    async def execute_payment(self, order_id: int, payload: OrderPay) -> OrderResponse:
-        async with self._repository.load_for_update(order_id) as order_aggr:
+    async def execute_payment(
+        self, order_id: int, payload: OrderPay, customer_id: int
+    ) -> OrderResponse:
+        async with self._repository.load_for_update(order_id, customer_id) as order_aggr:
             self._validator.validate_payable(order_aggr.state)
             amount = order_aggr.order.checkout_amount
             await order_aggr.mark_as_paying(payload)

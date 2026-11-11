@@ -19,7 +19,7 @@ from app.exceptions import (
 )
 from app.enums import OrderStatus, PaymentStatus
 from app.libs.clock.functional import now_utc
-from app.schemas.order import OrderCreate
+from app.schemas.order import OrderCreate, OrderPay
 from app.services.calculators.order import DEFAULT_PAYMENT_WINDOW, OrderCalculator
 from app.services.mappers.order import OrderSchemaMapper
 from app.services.order import OrderService, UnimplementedPaymentGateway
@@ -49,15 +49,18 @@ def a_service(repository: FakeOrderRepository) -> OrderService:
 
 
 def a_payload(event_seat_ids: list[int] | None = None) -> OrderCreate:
-    return OrderCreate(
-        user_id=1, event_id=1, event_seat_ids=event_seat_ids or [1, 2]
-    )
+    return OrderCreate(event_id=1, event_seat_ids=event_seat_ids or [1, 2])
+
+
+# FakeOrderRepository's existing order belongs to customer 1
+OWNER_ID = 1
+STRANGER_ID = 2
 
 
 @pytest.mark.asyncio
 async def test_create_order_opens_one_transaction():
     repo = FakeOrderRepository()
-    result = await a_service(repo).create_order(a_payload())
+    result = await a_service(repo).create_order(a_payload(), OWNER_ID)
 
     assert repo.calls == [
         "load_for_create",
@@ -74,7 +77,7 @@ async def test_prices_come_from_the_event_not_the_request():
     """The payload carries no amount at all - 1500 + 800 is what the zones say."""
     repo = FakeOrderRepository(seats=[a_seat_price(1, 1500), a_seat_price(2, 800)])
 
-    result = await a_service(repo).create_order(a_payload())
+    result = await a_service(repo).create_order(a_payload(), OWNER_ID)
 
     assert result.checkout_amount == 2300
     assert [ticket.amount for ticket in result.tickets] == [1500, 800]
@@ -85,7 +88,7 @@ async def test_payment_deadline_is_set_by_the_backend():
     repo = FakeOrderRepository()
     before = now_utc()
 
-    result = await a_service(repo).create_order(a_payload())
+    result = await a_service(repo).create_order(a_payload(), OWNER_ID)
 
     assert before + DEFAULT_PAYMENT_WINDOW <= result.payment_deadline
     assert result.payment_deadline <= now_utc() + DEFAULT_PAYMENT_WINDOW
@@ -97,7 +100,7 @@ async def test_unpublished_event_is_rejected_before_any_seat_is_read():
     repo = FakeOrderRepository(is_active=False)
 
     with pytest.raises(EventNotPublishedError):
-        await a_service(repo).create_order(a_payload())
+        await a_service(repo).create_order(a_payload(), OWNER_ID)
 
     assert repo.calls == ["load_for_create"]
 
@@ -107,7 +110,7 @@ async def test_started_event_never_reaches_the_insert():
     repo = FakeOrderRepository(start_at=now_utc() - timedelta(seconds=1))
 
     with pytest.raises(EventStartedError):
-        await a_service(repo).create_order(a_payload())
+        await a_service(repo).create_order(a_payload(), OWNER_ID)
 
     assert "create" not in repo.calls
 
@@ -119,7 +122,7 @@ async def test_seat_from_another_event_never_reaches_the_insert():
     repo = FakeOrderRepository(seats=[a_seat_price(1)])
 
     with pytest.raises(EntityNotFoundError):
-        await a_service(repo).create_order(a_payload([1, 2]))
+        await a_service(repo).create_order(a_payload([1, 2]), OWNER_ID)
 
     assert repo.calls == ["load_for_create", "seats_pricing"]
 
@@ -129,7 +132,7 @@ async def test_unpriced_zone_never_reaches_the_insert():
     repo = FakeOrderRepository(seats=[a_seat_price(1, price=None)])
 
     with pytest.raises(TicketPriceNotReadyError):
-        await a_service(repo).create_order(a_payload([1]))
+        await a_service(repo).create_order(a_payload([1]), OWNER_ID)
 
     assert repo.calls == ["load_for_create", "seats_pricing"]
 
@@ -163,7 +166,7 @@ async def test_a_lost_race_hands_nothing_back():
     cache = FakeEventLayoutCache(repo.calls, lock_fails=True)
 
     with pytest.raises(RedisError):
-        await a_service_with_cache(repo, cache).create_order(a_payload())
+        await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
     assert "release_seats" not in repo.calls
 
@@ -174,7 +177,7 @@ async def test_a_failed_insert_hands_the_seats_back():
     cache = FakeEventLayoutCache(repo.calls)
 
     with pytest.raises(RuntimeError, match="insert blew up"):
-        await a_service_with_cache(repo, cache).create_order(a_payload())
+        await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
     assert repo.calls == [
         "load_for_create",
@@ -194,7 +197,7 @@ async def test_the_seats_handed_back_are_the_ones_that_were_held():
     cache = FakeEventLayoutCache(repo.calls)
 
     with pytest.raises(RuntimeError):
-        await a_service_with_cache(repo, cache).create_order(a_payload())
+        await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
     (event_id, handed_back), = cache.released
     assert event_id == 1
@@ -209,7 +212,7 @@ async def test_a_failed_handback_does_not_replace_the_real_error():
     cache = FakeEventLayoutCache(repo.calls, release_fails=True)
 
     with pytest.raises(RuntimeError, match="insert blew up"):
-        await a_service_with_cache(repo, cache).create_order(a_payload())
+        await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
 
 @pytest.mark.asyncio
@@ -217,7 +220,7 @@ async def test_a_successful_order_hands_nothing_back():
     repo = FakeOrderRepository()
     cache = FakeEventLayoutCache(repo.calls)
 
-    await a_service_with_cache(repo, cache).create_order(a_payload())
+    await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
     assert "release_seats" not in repo.calls
 
@@ -230,7 +233,7 @@ async def test_a_broken_unlock_is_not_swallowed():
     cache = FakeEventLayoutCache(repo.calls, release_error=TypeError("bug on the way out"))
 
     with pytest.raises(TypeError, match="bug on the way out") as exc:
-        await a_service_with_cache(repo, cache).create_order(a_payload())
+        await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
     # Demoted, not lost: the failure that sent us here is still the context.
     assert isinstance(exc.value.__context__, RuntimeError)
@@ -245,7 +248,7 @@ async def test_the_log_names_the_seats_left_locked(caplog):
     cache = FakeEventLayoutCache(repo.calls, release_fails=True)
 
     with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError):
-        await a_service_with_cache(repo, cache).create_order(a_payload())
+        await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
     assert "(10, 1)" in caplog.text and "(11, 2)" in caplog.text
 
@@ -258,7 +261,7 @@ async def test_being_cancelled_mid_unlock_is_not_swallowed():
     cache = FakeEventLayoutCache(repo.calls, release_error=asyncio.CancelledError())
 
     with pytest.raises(asyncio.CancelledError):
-        await a_service_with_cache(repo, cache).create_order(a_payload())
+        await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
 
 # --------------------------------------------------------------------------- #
@@ -288,7 +291,7 @@ async def test_cancel_releases_the_seats_in_the_same_transaction():
     repo = FakeOrderRepository()
     service, _ = a_release_setup(repo)
 
-    result = await service.cancel_order(1)
+    result = await service.cancel_order(1, OWNER_ID)
 
     assert result.status == OrderStatus.CANCELLED
     assert repo.calls == [
@@ -305,7 +308,7 @@ async def test_cancel_releases_the_seats_of_this_order():
     repo = FakeOrderRepository()
     service, cache = a_release_setup(repo)
 
-    await service.cancel_order(1)
+    await service.cancel_order(1, OWNER_ID)
 
     assert repo.aggregate.released_seat_ids == [1, 2]
     (event_id, handed_back), = cache.released
@@ -327,7 +330,7 @@ async def test_an_uncancellable_order_never_touches_the_seats(status, payment_st
     service, _ = a_release_setup(repo)
 
     with pytest.raises(OrderNotCancellableError):
-        await service.cancel_order(1)
+        await service.cancel_order(1, OWNER_ID)
 
     assert repo.calls == ["load_for_release"]
 
@@ -357,3 +360,42 @@ async def test_an_order_still_within_its_deadline_is_left_alone():
     await service.check_order_expiration(1)
 
     assert repo.calls == ["load_for_release"]
+
+
+# --------------------------------------------------------------------------- #
+# Ownership
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_the_order_belongs_to_the_caller_not_to_the_request():
+    repo = FakeOrderRepository()
+
+    result = await a_service(repo).create_order(a_payload(), 42)
+
+    assert result.customer_id == 42
+
+
+@pytest.mark.asyncio
+async def test_someone_elses_order_looks_missing_and_is_left_untouched():
+    """404 rather than 403, so order ids cannot be probed for."""
+    for use_case in [
+        lambda service: service.get_order(1, STRANGER_ID),
+        lambda service: service.cancel_order(1, STRANGER_ID),
+        lambda service: service.execute_payment(1, OrderPay(payment_method="card"), STRANGER_ID),
+    ]:
+        repo = FakeOrderRepository()
+
+        with pytest.raises(EntityNotFoundError):
+            await use_case(a_release_setup(repo)[0])
+
+        assert repo.aggregate.order.status == OrderStatus.PENDING
+        assert repo.aggregate.order.payment_status == PaymentStatus.PENDING
+        assert "release_seats" not in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_owner_can_read_their_order():
+    repo = FakeOrderRepository()
+
+    result = await a_service(repo).get_order(1, OWNER_ID)
+
+    assert result.id == repo.aggregate.order.id
