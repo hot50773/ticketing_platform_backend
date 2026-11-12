@@ -22,6 +22,9 @@ from app.repositories.order import OrderRepository
 from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal
 from app.schemas import Page, PaginationParams
 from app.schemas.order import (
+    ManagerOrderDetailResponse,
+    ManagerOrderListParams,
+    ManagerOrderResponse,
     OrderCreate,
     OrderDelete,
     OrderDetailResponse,
@@ -127,6 +130,13 @@ class OrderService:
         """Returns an order with its tickets and their seat coordinates."""
         async with self._repository.load(order_id, customer_id) as order_aggr:
             return self._mapper.to_order_detail(order_aggr.with_tickets())
+
+    async def list_orders_for_manager(self, params: ManagerOrderListParams) -> Page[ManagerOrderResponse]:
+        return self._mapper.to_manager_order_page(await self._repository.get_orders_for_manager(params))
+
+    async def get_order_for_manager(self, order_id: int) -> ManagerOrderDetailResponse:
+        async with self._repository.load_for_manager(order_id) as order_aggr:
+            return self._mapper.to_manager_order_detail(order_aggr.with_tickets())
 
     async def cancel_order(self, order_id: int, customer_id: int) -> OrderResponse:
         async with self._repository.load_for_release(order_id, customer_id) as order_aggr:

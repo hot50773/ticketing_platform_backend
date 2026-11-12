@@ -13,6 +13,8 @@ transaction has closed.
 from app.models import Order
 from app.schemas import Page
 from app.schemas.order import (
+    ManagerOrderDetailResponse,
+    ManagerOrderResponse,
     OrderDetailResponse,
     OrderResponse,
     OrderTicketDetailResponse,
@@ -46,6 +48,21 @@ class OrderSchemaMapper:
     def to_order_detail(self, layout: OrderWithTicketsInternal) -> OrderDetailResponse:
         return OrderDetailResponse(
             **self.to_order(layout.order).model_dump(),
+            tickets=[self.to_ticket_detail(ticket) for ticket in layout.tickets],
+        )
+
+    def to_manager_order(self, order: Order) -> ManagerOrderResponse:
+        return ManagerOrderResponse(
+            **self.to_order(order).model_dump(),
+            deleted_by_manager_id=order.deleted_by_manager_id,
+        )
+
+    def to_manager_order_page(self, page: Page[Order]) -> Page[ManagerOrderResponse]:
+        return page.map(self.to_manager_order)
+
+    def to_manager_order_detail(self, layout: OrderWithTicketsInternal) -> ManagerOrderDetailResponse:
+        return ManagerOrderDetailResponse(
+            **self.to_manager_order(layout.order).model_dump(),
             tickets=[self.to_ticket_detail(ticket) for ticket in layout.tickets],
         )
 

@@ -8,6 +8,9 @@ from app.routers._auth import AnyManager, Customer, get_current_manager
 from app.services.order import OrderService
 from app.schemas import Page, PaginationParams
 from app.schemas.order import (
+    ManagerOrderDetailResponse,
+    ManagerOrderListParams,
+    ManagerOrderResponse,
     OrderCreate,
     OrderDelete,
     OrderDetailResponse,
@@ -82,6 +85,28 @@ async def customer_cancel_order(
     return await order_service.cancel_order(order_id, customer.id)
 
 
+@manager_router.get("", response_model=Page[ManagerOrderResponse], status_code=status.HTTP_200_OK)
+@inject
+async def manager_list_orders(
+    params: Annotated[ManagerOrderListParams, Query()],
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+):
+    """Every customer's orders, filterable by event, customer and status."""
+    return await order_service.list_orders_for_manager(params)
+
+
+@manager_router.get("/{order_id}", response_model=ManagerOrderDetailResponse, status_code=status.HTTP_200_OK)
+@inject
+async def manager_get_order(
+    order_id: int,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+):
+    """Any customer's order, soft-deleted ones included."""
+    return await order_service.get_order_for_manager(order_id)
+
+
+# TODO: let a manager cancel an unpaid order before its deadline (e.g. customer
+#  service); today only an expired one can be deleted.
 @manager_router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
 async def manager_delete_order(

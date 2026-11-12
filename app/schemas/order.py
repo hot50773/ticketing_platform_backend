@@ -15,7 +15,7 @@ from sqlmodel import SQLModel, Field
 
 from app.enums import OrderStatus, PaymentStatus
 from app.models import Order
-from ._shared import _TableMetaMixin
+from ._shared import PaginationParams, _TableMetaMixin
 
 
 # --------------------------------------------------------------------------- #
@@ -93,6 +93,30 @@ class OrderTicketDetailResponse(SQLModel, _TableMetaMixin):
     zone_name: str
 
 class OrderDetailResponse(OrderResponse):
+    tickets: list[OrderTicketDetailResponse] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Back office
+# --------------------------------------------------------------------------- #
+
+class ManagerOrderListParams(PaginationParams):
+    """GET /admin/orders. Soft-deleted orders are left out unless include_deleted."""
+    event_id: int | None = None
+    customer_id: int | None = None
+    status: OrderStatus | None = None
+    payment_status: PaymentStatus | None = None
+    include_deleted: bool = False
+
+
+class ManagerOrderResponse(OrderResponse):
+    deleted_by_manager_id: int | None = Field(
+        default=None, description="NULL on a deleted order means the system released an expired cart"
+    )
+
+
+class ManagerOrderDetailResponse(ManagerOrderResponse):
+    """A deleted order keeps the tickets it held, so the release can be audited."""
     tickets: list[OrderTicketDetailResponse] = Field(default_factory=list)
 
 

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from app.aggregates.event import EventAggregate
-from app.aggregates.order import TICKET_DETAIL_LOADER, OrderAggregate
+from app.aggregates.order import TICKET_DETAIL_LOADER, TICKET_HISTORY_LOADER, OrderAggregate
 from app.aggregates.order_factory import OrderAggregateFactory
 from app.exceptions import (
     EVENT_NOT_FOUND_MSG,
@@ -26,7 +26,7 @@ from app.exceptions import (
 from app.models import Event, Order
 from app.repositories._pagination import paginate
 from app.schemas import Page, PaginationParams
-from app.schemas.order import OrderCreate
+from app.schemas.order import ManagerOrderListParams, OrderCreate
 
 
 class OrderRepository:
@@ -106,6 +106,16 @@ class OrderRepository:
                 await session.rollback()
                 raise
 
+    @asynccontextmanager
+    async def load_for_manager(self, order_id: int) -> AsyncIterator[OrderAggregate]:
+        """Read-only, soft-deleted orders and their released tickets included."""
+        async with self.session_factory() as session:
+            stmt = select(Order).where(Order.id == order_id).options(TICKET_HISTORY_LOADER)
+            order = await session.scalar(stmt)
+            if not order:
+                raise EntityNotFoundError(ORDER_NOT_FOUND_MSG.format(order_id=order_id))
+            yield OrderAggregate(session, order)
+
     # ----------------------------------------------------------------------- #
     # Collection queries
     # ----------------------------------------------------------------------- #
@@ -117,6 +127,21 @@ class OrderRepository:
                 .order_by(Order.id)
             )
             return await paginate(session, stmt, pagination, Order)
+
+    async def get_orders_for_manager(self, params: ManagerOrderListParams) -> Page[Order]:
+        stmt = select(Order).order_by(Order.id)
+        if not params.include_deleted:
+            stmt = stmt.where(Order.deleted_at == None)
+        if params.event_id is not None:
+            stmt = stmt.where(Order.event_id == params.event_id)
+        if params.customer_id is not None:
+            stmt = stmt.where(Order.customer_id == params.customer_id)
+        if params.status is not None:
+            stmt = stmt.where(Order.status == params.status)
+        if params.payment_status is not None:
+            stmt = stmt.where(Order.payment_status == params.payment_status)
+        async with self.session_factory() as session:
+            return await paginate(session, stmt, params, Order)
 
     # ----------------------------------------------------------------------- #
     # Internals

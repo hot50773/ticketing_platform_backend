@@ -68,6 +68,13 @@ TICKET_DETAIL_LOADER = (
     .joinedload(OrderTicket.event_seat)
     .joinedload(EventSeat.event_zone)
 )
+# Back-office reads: soft_delete_cascade deletes the tickets with the order, and
+# the audit needs to see which seats a deleted order held.
+TICKET_HISTORY_LOADER = (
+    selectinload(Order.tickets)
+    .joinedload(OrderTicket.event_seat)
+    .joinedload(EventSeat.event_zone)
+)
 
 
 class OrderAggregate:
