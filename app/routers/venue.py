@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from dependency_injector.wiring import inject, Provide
 from app.containers import Container
 from app.routers._auth import get_current_manager
@@ -16,7 +16,6 @@ from app.schemas.venue import (
     SeatCreate,
     SeatResponse,
 )
-from app.exceptions import EntityNotFoundError, EntityConflictError, ActiveEventsExistError
 
 customer_router = APIRouter(tags=["venues"])
 manager_router = APIRouter(prefix="/admin", tags=["venues"], dependencies=[Depends(get_current_manager)])
@@ -48,10 +47,7 @@ async def customer_get_venue(
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Gets details of an active venue by its ID."""
-    try:
-        return await venue_service.get_venue(venue_id)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    return await venue_service.get_venue(venue_id)
 
 
 @manager_router.delete("/venues/{venue_id}", status_code=status.HTTP_200_OK)
@@ -64,13 +60,8 @@ async def manager_delete_venue(
     Soft-deletes a venue along with all its zones and seats.
     Rejects the operation if active events are linked to the venue.
     """
-    try:
-        await venue_service.delete_venue(venue_id)
-        return {"success": True}
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except ActiveEventsExistError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    await venue_service.delete_venue(venue_id)
+    return {"success": True}
 
 
 @manager_router.post("/venues/{venue_id}/zones", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
@@ -81,12 +72,7 @@ async def manager_create_zone(
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a new zone under a venue."""
-    try:
-        return await venue_service.create_zone(venue_id, zone_data)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except EntityConflictError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    return await venue_service.create_zone(venue_id, zone_data)
 
 
 
@@ -99,12 +85,7 @@ async def manager_create_seat(
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Creates a single seat under a zone."""
-    try:
-        return await venue_service.create_seat(zone_id, seat_data)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except EntityConflictError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    return await venue_service.create_seat(zone_id, seat_data)
 
 
 @manager_router.post("/zones/{zone_id}/seats/batch", response_model=list[SeatResponse], status_code=status.HTTP_201_CREATED)
@@ -115,12 +96,7 @@ async def manager_create_seats_batch(
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
     """Batch creates multiple seats under a zone."""
-    try:
-        return await venue_service.batch_create_seats(zone_id, batch_data.seats)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except EntityConflictError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    return await venue_service.batch_create_seats(zone_id, batch_data.seats)
 
 
 # --------------------------------------------------------------------------- #

@@ -198,3 +198,10 @@ async def test_zone_and_seat_list_pagination(
 
     past_end = (await async_client.get(f"/api/v1/admin/zones/{zone_id}/seats?page=2&page_size=20")).json()
     assert past_end["items"] == [] and past_end["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_venue_that_still_has_events_is_a_conflict(async_client: AsyncClient, seeded_event: dict):
+    response = await async_client.delete(f"/api/v1/admin/venues/{seeded_event['venue_id']}")
+
+    assert response.status_code == 409
