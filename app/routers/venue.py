@@ -9,6 +9,7 @@ from app.schemas import Page, PaginationParams
 from app.schemas.venue import (
     VenueCreate,
     VenueResponse,
+    VenueSummaryResponse,
     ZoneBase,
     ZoneResponse,
     SeatBatchCreateRequest,
@@ -30,7 +31,7 @@ async def manager_create_venue(
     return await venue_service.create_venue(venue_data)
 
 
-@customer_router.get("/venues", response_model=Page[VenueResponse], status_code=status.HTTP_200_OK)
+@customer_router.get("/venues", response_model=Page[VenueSummaryResponse], status_code=status.HTTP_200_OK)
 @inject
 async def customer_list_venues(
     pagination: Annotated[PaginationParams, Query()],
@@ -40,7 +41,7 @@ async def customer_list_venues(
     return await venue_service.list_venues(pagination)
 
 
-@customer_router.get("/venues/{venue_id}", response_model=VenueResponse, status_code=status.HTTP_200_OK)
+@customer_router.get("/venues/{venue_id}", response_model=VenueSummaryResponse, status_code=status.HTTP_200_OK)
 @inject
 async def customer_get_venue(
     venue_id: int,
@@ -88,31 +89,6 @@ async def manager_create_zone(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
-@customer_router.get("/venues/{venue_id}/zones", response_model=Page[ZoneResponse], status_code=status.HTTP_200_OK)
-@inject
-async def customer_list_zones_by_venue(
-    venue_id: int,
-    pagination: Annotated[PaginationParams, Query()],
-    venue_service: VenueService = Depends(Provide[Container.venue_service]),
-):
-    """Lists active zones under a venue, one page at a time."""
-    try:
-        return await venue_service.list_zones_by_venue(venue_id, pagination)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-
-
-@customer_router.get("/zones/{zone_id}", response_model=ZoneResponse, status_code=status.HTTP_200_OK)
-@inject
-async def customer_get_zone(
-    zone_id: int,
-    venue_service: VenueService = Depends(Provide[Container.venue_service]),
-):
-    """Gets details of an active zone by its ID."""
-    try:
-        return await venue_service.get_and_check_zone(zone_id)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @manager_router.post("/zones/{zone_id}/seats", response_model=SeatResponse, status_code=status.HTTP_201_CREATED)
@@ -147,28 +123,61 @@ async def manager_create_seats_batch(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
-@customer_router.get("/zones/{zone_id}/seats", response_model=Page[SeatResponse], status_code=status.HTTP_200_OK)
+# --------------------------------------------------------------------------- #
+# Back-office reads of the venue template. The storefront sees an event's own
+# zones and seats instead, cloned from this template at event creation.
+# --------------------------------------------------------------------------- #
+@manager_router.get("/venues", response_model=Page[VenueResponse], status_code=status.HTTP_200_OK)
 @inject
-async def customer_list_seats_by_zone(
+async def manager_list_venues(
+    pagination: Annotated[PaginationParams, Query()],
+    venue_service: VenueService = Depends(Provide[Container.venue_service]),
+):
+    return await venue_service.list_venues(pagination)
+
+
+@manager_router.get("/venues/{venue_id}", response_model=VenueResponse, status_code=status.HTTP_200_OK)
+@inject
+async def manager_get_venue(
+    venue_id: int,
+    venue_service: VenueService = Depends(Provide[Container.venue_service]),
+):
+    return await venue_service.get_venue(venue_id)
+
+
+@manager_router.get("/venues/{venue_id}/zones", response_model=Page[ZoneResponse], status_code=status.HTTP_200_OK)
+@inject
+async def manager_list_zones_by_venue(
+    venue_id: int,
+    pagination: Annotated[PaginationParams, Query()],
+    venue_service: VenueService = Depends(Provide[Container.venue_service]),
+):
+    return await venue_service.list_zones_by_venue(venue_id, pagination)
+
+
+@manager_router.get("/zones/{zone_id}", response_model=ZoneResponse, status_code=status.HTTP_200_OK)
+@inject
+async def manager_get_zone(
+    zone_id: int,
+    venue_service: VenueService = Depends(Provide[Container.venue_service]),
+):
+    return await venue_service.get_and_check_zone(zone_id)
+
+
+@manager_router.get("/zones/{zone_id}/seats", response_model=Page[SeatResponse], status_code=status.HTTP_200_OK)
+@inject
+async def manager_list_seats_by_zone(
     zone_id: int,
     pagination: Annotated[PaginationParams, Query()],
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
-    """Lists active seats under a zone, one page at a time."""
-    try:
-        return await venue_service.list_seats_by_zone(zone_id, pagination)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    return await venue_service.list_seats_by_zone(zone_id, pagination)
 
 
-@customer_router.get("/seats/{seat_id}", response_model=SeatResponse, status_code=status.HTTP_200_OK)
+@manager_router.get("/seats/{seat_id}", response_model=SeatResponse, status_code=status.HTTP_200_OK)
 @inject
-async def customer_get_seat(
+async def manager_get_seat(
     seat_id: int,
     venue_service: VenueService = Depends(Provide[Container.venue_service]),
 ):
-    """Gets details of an active seat by its ID."""
-    try:
-        return await venue_service.get_seat(seat_id)
-    except EntityNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    return await venue_service.get_seat(seat_id)

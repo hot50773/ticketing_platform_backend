@@ -188,13 +188,13 @@ async def test_zone_and_seat_list_pagination(
     venue_id = seeded_venue_and_seats["venue_id"]
     zone_id = seeded_venue_and_seats["zone_a_id"]
 
-    zones = (await async_client.get(f"/api/v1/venues/{venue_id}/zones?page_size=20")).json()
+    zones = (await async_client.get(f"/api/v1/admin/venues/{venue_id}/zones?page_size=20")).json()
     assert zones["total"] == 2 and len(zones["items"]) == 2
     assert zones["page"] == 1 and zones["page_size"] == 20
 
-    seats = (await async_client.get(f"/api/v1/zones/{zone_id}/seats?page_size=20")).json()
+    seats = (await async_client.get(f"/api/v1/admin/zones/{zone_id}/seats?page_size=20")).json()
     assert seats["total"] == 2
     assert [s["serial_number"] for s in seats["items"]] == [0, 1]
 
-    past_end = (await async_client.get(f"/api/v1/zones/{zone_id}/seats?page=2&page_size=20")).json()
+    past_end = (await async_client.get(f"/api/v1/admin/zones/{zone_id}/seats?page=2&page_size=20")).json()
     assert past_end["items"] == [] and past_end["total"] == 2

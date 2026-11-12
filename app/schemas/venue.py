@@ -12,6 +12,14 @@ class VenueCreate(SQLModel):
     address: str = Field(max_length=100)
 
 
+class VenueSummaryResponse(SQLModel):
+    """What the storefront needs to show where an event takes place."""
+    id: int
+    name: str
+    description: str
+    address: str
+
+
 class VenueResponse(SQLModel):
     """Schema representing Venue details returned by API."""
     id: int

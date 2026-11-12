@@ -72,3 +72,25 @@ async def test_a_manager_sees_a_deleted_order_with_the_tickets_it_held(
     assert (body["deleted_by_manager_id"], body["comment"]) == (manager_id, "duplicate")
     assert [ticket["event_seat_id"] for ticket in body["tickets"]] == [seat_id]
     assert (await anonymous_client.get(f"{API}/admin/orders/9999", headers=manager)).status_code == 404
+
+
+async def test_the_storefront_sees_a_venue_summary_and_templates_are_back_office_only(
+    anonymous_client: AsyncClient, manager_headers, customer_headers, seeded_venue_and_seats: dict
+):
+    venue_id, zone_id = seeded_venue_and_seats["venue_id"], seeded_venue_and_seats["zone_a_id"]
+    seat_id = seeded_venue_and_seats["seats"]["a1"]
+    manager = await manager_headers()
+
+    summary = await anonymous_client.get(f"{API}/venues/{venue_id}")
+    assert summary.status_code == 200
+    assert set(summary.json()) == {"id", "name", "description", "address"}
+
+    template_reads = [f"venues/{venue_id}/zones", f"zones/{zone_id}", f"zones/{zone_id}/seats", f"seats/{seat_id}"]
+    for path in template_reads:
+        assert (await anonymous_client.get(f"{API}/{path}")).status_code == 404, path
+        assert (await anonymous_client.get(f"{API}/admin/{path}", headers=manager)).status_code == 200, path
+
+    detail = await anonymous_client.get(f"{API}/admin/venues/{venue_id}", headers=manager)
+    assert "created_at" in detail.json()
+    customer = await customer_headers()
+    assert (await anonymous_client.get(f"{API}/admin/venues", headers=customer)).status_code == 403
