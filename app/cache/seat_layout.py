@@ -1,4 +1,4 @@
-"""Redis bitmaps derived from a frozen event layout.
+"""Redis bitmaps derived from a frozen seat layout.
 
 Written at publish time, when the zone/seat layout can no longer change and
 `serial_number` is therefore a stable bit offset (0-based, so the column value
@@ -44,7 +44,7 @@ from app.exceptions import (
     UnknownSeatLockFailureError,
 )
 from app.schemas.event import (
-    EventLayoutInternal,
+    SeatLayoutInternal,
     EventZoneWithSeatInternal,
     EventSeatsPricingInternal,
     SeatPositionInternal,
@@ -64,7 +64,7 @@ def load_lua_scripts(path: Path, encoding: str = "utf-8") -> str:
 
 LUA_BASE_DIR = Path(__file__).parent / "lua"
 
-class EventLayoutCache:
+class SeatLayoutCache:
     """Caches seat layouts for event in Redis."""
     LOCK_SEATS_SCRIPT_PATH = LUA_BASE_DIR / "lock_seats.lua"
     RELEASE_SEATS_SCRIPT_PATH = LUA_BASE_DIR / "release_seats.lua"
@@ -81,12 +81,12 @@ class EventLayoutCache:
     def _register(self, path: Path):
         return self._redis_client.register_script(load_lua_scripts(path))
 
-    async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
+    async def init_seat_layouts(self, seat_layout: SeatLayoutInternal) -> None:
         """Warms every zone's existence bitmap in one round trip."""
-        event_id = event_layout.event.id
+        event_id = seat_layout.event.id
         try:
             async with self._redis_client.pipeline() as pipeline:
-                for zone in event_layout.zones:
+                for zone in seat_layout.zones:
                     self.mark_seats_existence_for_zone(
                         pipeline=pipeline, event_id=event_id, zone=zone
                     )

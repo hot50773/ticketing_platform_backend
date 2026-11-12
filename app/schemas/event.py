@@ -222,12 +222,12 @@ class EventZoneWithSeatInternal(SQLModel):
     seats: list[EventSeatInternal]
 
 
-class EventLayoutInternal(SQLModel):
+class SeatLayoutInternal(SQLModel):
     event: Event
     zones: list[EventZoneWithSeatInternal] = Field(default_factory=list)
 
 
-class EventLayoutSummaryInternal(SQLModel):
+class SeatLayoutSummaryInternal(SQLModel):
     """An event together with its zones and per-zone seat counts."""
     event: Event
     zones: list[EventZoneWithSeatCountInternal] = Field(default_factory=list)

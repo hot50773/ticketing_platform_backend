@@ -2,7 +2,7 @@ import pytest
 
 from app.exceptions import EntityNotFoundError, EventPublishedError, SeatOccupiedError
 from app.schemas.event import EventSeatLayout, EventSeatLayoutUpdate, EventZoneCreate
-from app.services.event_layout import EventLayoutService
+from app.services.seat_layout import SeatLayoutService
 from app.services.mappers import EventSchemaMapper
 from app.services.validators import EventRuleValidator
 from tests.unit._fakes import (
@@ -14,8 +14,8 @@ from tests.unit._fakes import (
 
 def a_service(
     repository: FakeEventRepository, detail_cache: FakeEventDetailCache | None = None
-) -> EventLayoutService:
-    return EventLayoutService(
+) -> SeatLayoutService:
+    return SeatLayoutService(
         event_repository=repository,
         event_rule_validator=EventRuleValidator(),
         event_schema_mapper=EventSchemaMapper(),

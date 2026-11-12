@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from app.libs.clock.functional import now_utc
-from app.schemas.event import EventSeatsPricingInternal, EventLayoutInternal
+from app.schemas.event import EventSeatsPricingInternal, SeatLayoutInternal
 from app.schemas.order import (
     OrderCreate,
     OrderCreateInternal,

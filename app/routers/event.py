@@ -6,7 +6,7 @@ from dependency_injector.wiring import inject, Provide
 from app.containers import Container
 from app.routers._auth import get_current_manager
 from app.services.event import EventService
-from app.services.event_layout import EventLayoutService
+from app.services.seat_layout import SeatLayoutService
 from app.schemas import Page, PaginationParams
 from app.schemas.event import (
     EventCreate,
@@ -139,7 +139,7 @@ async def manager_delete_event(
 
 
 # --------------------------------------------------------------------------- #
-# EventZone / EventSeat - served by EventLayoutService
+# EventZone / EventSeat - served by SeatLayoutService
 # --------------------------------------------------------------------------- #
 @manager_router.post(
     "/{event_id}/event_zones",
@@ -150,7 +150,7 @@ async def manager_delete_event(
 async def manager_create_event_zone(
     event_id: int,
     payload: EventZoneCreate,
-    layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
+    layout_service: SeatLayoutService = Depends(Provide[Container.seat_layout_service]),
 ):
     """Creates a zone and its seats. Rejected once the event is published."""
     return await layout_service.create_event_zone(event_id, payload)
@@ -167,7 +167,7 @@ async def manager_update_event_zone_profile(
     event_zone_id: int,
     payload: EventZoneProfileUpdate,
     background_tasks: BackgroundTasks,
-    layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
+    layout_service: SeatLayoutService = Depends(Provide[Container.seat_layout_service]),
 ):
     """Updates a zone's name and ticket price."""
     return await layout_service.update_event_zone_profile(
@@ -185,7 +185,7 @@ async def customer_list_event_zone_seats(
     event_id: int,
     event_zone_id: int,
     pagination: Annotated[PaginationParams, Query()],
-    layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
+    layout_service: SeatLayoutService = Depends(Provide[Container.seat_layout_service]),
 ):
     """Lists the zone's seat layout and each seat's current status. Drafts read as 404."""
     return await layout_service.list_event_zone_seats(event_id, event_zone_id, pagination)
@@ -201,7 +201,7 @@ async def manager_list_event_zone_seats(
     event_id: int,
     event_zone_id: int,
     pagination: Annotated[PaginationParams, Query()],
-    layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
+    layout_service: SeatLayoutService = Depends(Provide[Container.seat_layout_service]),
 ):
     """Same as the public route, drafts included."""
     return await layout_service.list_event_zone_seats_for_manager(event_id, event_zone_id, pagination)
@@ -217,7 +217,7 @@ async def manager_replace_event_zone_seats(
     event_id: int,
     event_zone_id: int,
     payload: EventSeatLayoutUpdate,
-    layout_service: EventLayoutService = Depends(Provide[Container.event_layout_service]),
+    layout_service: SeatLayoutService = Depends(Provide[Container.seat_layout_service]),
 ):
     """Replaces the zone's seat layout wholesale. Rejected once published."""
     return await layout_service.replace_event_zone_seats(event_id, event_zone_id, payload)

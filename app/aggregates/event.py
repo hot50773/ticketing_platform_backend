@@ -48,7 +48,7 @@ from app.repositories._pagination import paginate
 from app.schemas import Page, PaginationParams
 from app.schemas.event import (
     EventHoldingTimeUpdate,
-    EventLayoutSummaryInternal,
+    SeatLayoutSummaryInternal,
     EventOrderStatsInternal,
     EventProfileUpdate,
     EventSeatDiffInternal,
@@ -60,7 +60,7 @@ from app.schemas.event import (
     EventZoneProfileUpdate,
     EventZoneWithSeatCountInternal,
     EventZoneWithSeatInternal,
-    EventLayoutInternal,
+    SeatLayoutInternal,
     EventSeatInternal,
     SeatPriceInternal,
 )
@@ -95,7 +95,7 @@ class EventAggregate:
             start_at=self._event.start_at,
         )
 
-    async def event_layout(self) -> EventLayoutInternal:
+    async def seat_layout(self) -> SeatLayoutInternal:
         """Every zone and seat that still exists - the publish-time snapshot.
 
         Soft-deleted seats are filtered out as they load, or a retired seat
@@ -106,7 +106,7 @@ class EventAggregate:
         )
         zones = rows.scalars().all()
 
-        return EventLayoutInternal(
+        return SeatLayoutInternal(
             event=self._event,
             zones=[
                 EventZoneWithSeatInternal(
@@ -185,7 +185,7 @@ class EventAggregate:
     # ----------------------------------------------------------------------- #
     # Reads
     # ----------------------------------------------------------------------- #
-    async def layout(self) -> EventLayoutSummaryInternal:
+    async def layout(self) -> SeatLayoutSummaryInternal:
         """The event with its zones and per-zone seat counts."""
         rows = await self._session.execute(
             self._existing_zones_stmt(self._event.id)
@@ -197,7 +197,7 @@ class EventAggregate:
             .group_by(EventZone.id)
             .order_by(EventZone.name)
         )
-        return EventLayoutSummaryInternal(
+        return SeatLayoutSummaryInternal(
             event=self._event,
             zones=[
                 EventZoneWithSeatCountInternal(zone=zone, seat_count=seat_count)

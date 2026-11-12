@@ -13,7 +13,7 @@ from app.models import Order, OrderTicket
 from app.schemas.event import (
     EventSeatsPricingInternal,
     EventStateInternal,
-    EventLayoutInternal,
+    SeatLayoutInternal,
 )
 from app.schemas.order import OrderCreate, OrderCreateInternal
 
@@ -45,8 +45,8 @@ class OrderAggregateFactory:
     async def seats_pricing(self) -> EventSeatsPricingInternal:
         return await self._event.seat_prices(self._payload.event_seat_ids)
 
-    async def event_layout(self) -> EventLayoutInternal:
-        return await self._event.event_layout()
+    async def seat_layout(self) -> SeatLayoutInternal:
+        return await self._event.seat_layout()
     # ----------------------------------------------------------------------- #
     # Mutations
     # ----------------------------------------------------------------------- #

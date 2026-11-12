@@ -27,7 +27,7 @@ from app.services.validators.order import OrderValidator
 from redis import RedisError
 
 from tests.unit._fakes import (
-    FakeEventLayoutCache,
+    FakeSeatLayoutCache,
     FakeOrderExpirationScheduler,
     FakeOrderRepository,
     a_seat_price,
@@ -43,7 +43,7 @@ def a_service(repository: FakeOrderRepository) -> OrderService:
         order_calculator=OrderCalculator(),
         order_schema_mapper=OrderSchemaMapper(),
         payment_gateway=UnimplementedPaymentGateway(),
-        event_layout_cache=FakeEventLayoutCache(repository.calls),
+        seat_layout_cache=FakeSeatLayoutCache(repository.calls),
         order_expiration_scheduler=FakeOrderExpirationScheduler(),
     )
 
@@ -145,7 +145,7 @@ async def test_unpriced_zone_never_reaches_the_insert():
 # exist and nobody can buy them. So the service hands them back itself.
 # --------------------------------------------------------------------------- #
 def a_service_with_cache(
-    repository: FakeOrderRepository, cache: FakeEventLayoutCache
+    repository: FakeOrderRepository, cache: FakeSeatLayoutCache
 ) -> OrderService:
     return OrderService(
         order_repository=repository,
@@ -153,7 +153,7 @@ def a_service_with_cache(
         order_calculator=OrderCalculator(),
         order_schema_mapper=OrderSchemaMapper(),
         payment_gateway=UnimplementedPaymentGateway(),
-        event_layout_cache=cache,
+        seat_layout_cache=cache,
         order_expiration_scheduler=FakeOrderExpirationScheduler(),
     )
 
@@ -163,7 +163,7 @@ async def test_a_lost_race_hands_nothing_back():
     """The hold belongs to whoever won it - releasing here would hand them
     somebody else's seats."""
     repo = FakeOrderRepository()
-    cache = FakeEventLayoutCache(repo.calls, lock_fails=True)
+    cache = FakeSeatLayoutCache(repo.calls, lock_fails=True)
 
     with pytest.raises(RedisError):
         await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
@@ -174,7 +174,7 @@ async def test_a_lost_race_hands_nothing_back():
 @pytest.mark.asyncio
 async def test_a_failed_insert_hands_the_seats_back():
     repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
-    cache = FakeEventLayoutCache(repo.calls)
+    cache = FakeSeatLayoutCache(repo.calls)
 
     with pytest.raises(RuntimeError, match="insert blew up"):
         await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
@@ -194,7 +194,7 @@ async def test_the_seats_handed_back_are_the_ones_that_were_held():
     SeatPositionInternal calls it serial_number."""
     seats = [a_seat_price(1, event_zone_id=10), a_seat_price(2, event_zone_id=11)]
     repo = FakeOrderRepository(seats=seats, create_error=RuntimeError("boom"))
-    cache = FakeEventLayoutCache(repo.calls)
+    cache = FakeSeatLayoutCache(repo.calls)
 
     with pytest.raises(RuntimeError):
         await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
@@ -209,7 +209,7 @@ async def test_a_failed_handback_does_not_replace_the_real_error():
     """Whatever broke the insert is what the caller has to debug; a Redis
     failure on the way out must not take its place."""
     repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
-    cache = FakeEventLayoutCache(repo.calls, release_fails=True)
+    cache = FakeSeatLayoutCache(repo.calls, release_fails=True)
 
     with pytest.raises(RuntimeError, match="insert blew up"):
         await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
@@ -218,7 +218,7 @@ async def test_a_failed_handback_does_not_replace_the_real_error():
 @pytest.mark.asyncio
 async def test_a_successful_order_hands_nothing_back():
     repo = FakeOrderRepository()
-    cache = FakeEventLayoutCache(repo.calls)
+    cache = FakeSeatLayoutCache(repo.calls)
 
     await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
 
@@ -230,7 +230,7 @@ async def test_a_broken_unlock_is_not_swallowed():
     """Only a Redis outage is tolerated. A defect in our own unlock code has to
     surface rather than quietly leave seats locked on every failed order."""
     repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
-    cache = FakeEventLayoutCache(repo.calls, release_error=TypeError("bug on the way out"))
+    cache = FakeSeatLayoutCache(repo.calls, release_error=TypeError("bug on the way out"))
 
     with pytest.raises(TypeError, match="bug on the way out") as exc:
         await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
@@ -245,7 +245,7 @@ async def test_the_log_names_the_seats_left_locked(caplog):
     says which ones are stuck."""
     seats = [a_seat_price(1, event_zone_id=10), a_seat_price(2, event_zone_id=11)]
     repo = FakeOrderRepository(seats=seats, create_error=RuntimeError("boom"))
-    cache = FakeEventLayoutCache(repo.calls, release_fails=True)
+    cache = FakeSeatLayoutCache(repo.calls, release_fails=True)
 
     with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError):
         await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
@@ -258,7 +258,7 @@ async def test_being_cancelled_mid_unlock_is_not_swallowed():
     """A cancelled request still has to stop. Catching BaseException here would
     log the cancellation as a bug of ours and let the task carry on."""
     repo = FakeOrderRepository(create_error=RuntimeError("insert blew up"))
-    cache = FakeEventLayoutCache(repo.calls, release_error=asyncio.CancelledError())
+    cache = FakeSeatLayoutCache(repo.calls, release_error=asyncio.CancelledError())
 
     with pytest.raises(asyncio.CancelledError):
         await a_service_with_cache(repo, cache).create_order(a_payload(), OWNER_ID)
@@ -272,15 +272,15 @@ async def test_being_cancelled_mid_unlock_is_not_swallowed():
 # --------------------------------------------------------------------------- #
 def a_release_setup(
     repository: FakeOrderRepository,
-) -> tuple[OrderService, FakeEventLayoutCache]:
-    cache = FakeEventLayoutCache(repository.calls)
+) -> tuple[OrderService, FakeSeatLayoutCache]:
+    cache = FakeSeatLayoutCache(repository.calls)
     service = OrderService(
         order_repository=repository,
         order_validator=OrderValidator(),
         order_calculator=OrderCalculator(),
         order_schema_mapper=OrderSchemaMapper(),
         payment_gateway=UnimplementedPaymentGateway(),
-        event_layout_cache=cache,
+        seat_layout_cache=cache,
         order_expiration_scheduler=FakeOrderExpirationScheduler(),
     )
     return service, cache

@@ -15,8 +15,8 @@ from app.models import Customer, Event, EventZone, Order, Manager
 from app.schemas import Page
 from app.enums import OrderStatus, PaymentStatus, SeatStatus
 from app.schemas.event import (
-    EventLayoutInternal,
-    EventLayoutSummaryInternal,
+    SeatLayoutInternal,
+    SeatLayoutSummaryInternal,
     EventListCacheFieldInternal,
     EventOrderStatsInternal,
     EventSeatInternal,
@@ -101,17 +101,17 @@ class FakeAggregate:
             start_at=self._event.start_at,
         )
 
-    async def layout(self) -> EventLayoutSummaryInternal:
+    async def layout(self) -> SeatLayoutSummaryInternal:
         self.calls.append("layout")
-        return EventLayoutSummaryInternal(
+        return SeatLayoutSummaryInternal(
             event=self._event,
             zones=[EventZoneWithSeatCountInternal(zone=a_zone(), seat_count=4)],
         )
 
-    async def event_layout(self) -> EventLayoutInternal:
+    async def seat_layout(self) -> SeatLayoutInternal:
         """The full layout, seats included - what publish_event hands the cache."""
-        self.calls.append("event_layout")
-        return EventLayoutInternal(
+        self.calls.append("seat_layout")
+        return SeatLayoutInternal(
             event=self._event, zones=[a_zone_with_seats(price=self._zone_price)]
         )
 
@@ -314,7 +314,7 @@ class FakeEventDetailCache:
         self.lock_held = False
 
 
-class FakeEventLayoutCache:
+class FakeSeatLayoutCache:
     """Records the Redis warm-up instead of performing it.
 
     Takes the repository's `calls` list so a test can see where the cache write
@@ -340,16 +340,16 @@ class FakeEventLayoutCache:
         self._release_error = release_error or (
             RedisError("fake redis is down") if (release_fails or fail) else None
         )
-        self.warmed: list[EventLayoutInternal] = []
+        self.warmed: list[SeatLayoutInternal] = []
         self.cleared: list[tuple[int, list[int]]] = []
         self.locked: list[EventSeatsPricingInternal] = []
         self.released: list[tuple[int, list[SeatPositionInternal]]] = []
 
-    async def init_event_layouts(self, event_layout: EventLayoutInternal) -> None:
-        self.calls.append("init_event_layouts")
+    async def init_seat_layouts(self, seat_layout: SeatLayoutInternal) -> None:
+        self.calls.append("init_seat_layouts")
         if self._fail:
             raise RedisError("fake redis is down")
-        self.warmed.append(event_layout)
+        self.warmed.append(seat_layout)
 
     async def clear_seat_layouts(self, event_id: int, zone_ids: list[int]) -> None:
         self.calls.append("clear_seat_layouts")

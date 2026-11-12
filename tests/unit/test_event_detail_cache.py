@@ -16,7 +16,7 @@ from app.services.validators import EventRuleValidator
 from tests.unit._fakes import (
     FakeBackgroundTasks,
     FakeEventDetailCache,
-    FakeEventLayoutCache,
+    FakeSeatLayoutCache,
     FakeEventListCache,
     FakeEventRepository,
     an_event,
@@ -28,7 +28,7 @@ def a_service(repository: FakeEventRepository, detail_cache: FakeEventDetailCach
         event_repository=repository,
         event_rule_validator=EventRuleValidator(),
         event_schema_mapper=EventSchemaMapper(),
-        seat_cache=FakeEventLayoutCache(repository.calls),
+        seat_cache=FakeSeatLayoutCache(repository.calls),
         event_list_cache=FakeEventListCache(repository.calls),
         event_detail_cache=detail_cache,
     )

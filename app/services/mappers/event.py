@@ -9,7 +9,7 @@ from app.models import Event, EventSeat, EventZone
 from app.schemas import Page
 from app.schemas.event import (
     EventDetailResponse,
-    EventLayoutSummaryInternal,
+    SeatLayoutSummaryInternal,
     EventResponse,
     EventSeatLayoutSyncResponse,
     EventSeatResponse,
@@ -38,7 +38,7 @@ class EventSchemaMapper:
     def to_event_page(self, page: Page[Event]) -> Page[EventResponse]:
         return page.map(self.to_event)
 
-    def to_event_detail(self, layout: EventLayoutSummaryInternal) -> EventDetailResponse:
+    def to_event_detail(self, layout: SeatLayoutSummaryInternal) -> EventDetailResponse:
         return EventDetailResponse(
             **self.to_event(layout.event).model_dump(),
             zones=[self.to_zone(zone) for zone in layout.zones],

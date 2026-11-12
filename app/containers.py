@@ -4,7 +4,7 @@ import pkgutil
 from dependency_injector import containers, providers
 
 from app.cache.event_detail import EventDetailCache
-from app.cache.event_layout import EventLayoutCache
+from app.cache.seat_layout import SeatLayoutCache
 from app.cache.event_list import EventListCache
 from app.cache.login_attempts import LoginAttemptLimiter
 from app.config import settings
@@ -20,7 +20,7 @@ from app.repositories.venue import VenueRepository
 from app.services.auth import AuthService
 from app.services.calculators.order import OrderCalculator
 from app.services.event import EventService
-from app.services.event_layout import EventLayoutService
+from app.services.seat_layout import SeatLayoutService
 from app.services.mappers.customer import CustomerSchemaMapper
 from app.services.mappers.manager import ManagerSchemaMapper
 from app.services.order import OrderService, UnimplementedPaymentGateway
@@ -90,7 +90,7 @@ class Container(containers.DeclarativeContainer):
     )
 
     # Cache
-    event_layout_cache = providers.Factory(EventLayoutCache, redis_client=redis_client)
+    seat_layout_cache = providers.Factory(SeatLayoutCache, redis_client=redis_client)
     event_list_cache = providers.Factory(EventListCache, redis_client=redis_client)
     event_detail_cache = providers.Factory(EventDetailCache, redis_client=redis_client)
     login_attempt_limiter = providers.Factory(
@@ -155,13 +155,13 @@ class Container(containers.DeclarativeContainer):
         event_repository=event_repository,
         event_rule_validator=event_rule_validator,
         event_schema_mapper=event_schema_mapper,
-        seat_cache=event_layout_cache,
+        seat_cache=seat_layout_cache,
         event_list_cache=event_list_cache,
         event_detail_cache=event_detail_cache,
     )
 
-    event_layout_service = providers.Factory(
-        EventLayoutService,
+    seat_layout_service = providers.Factory(
+        SeatLayoutService,
         event_repository=event_repository,
         event_rule_validator=event_rule_validator,
         event_schema_mapper=event_schema_mapper,
@@ -182,7 +182,7 @@ class Container(containers.DeclarativeContainer):
         order_calculator=order_calculator,
         order_schema_mapper=order_schema_mapper,
         payment_gateway=payment_gateway,
-        event_layout_cache=event_layout_cache,
+        seat_layout_cache=seat_layout_cache,
         order_expiration_scheduler=order_expiration_queue,
     )
 

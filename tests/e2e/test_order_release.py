@@ -22,11 +22,11 @@ from app.schemas.event import EventSeatsPricingInternal, SeatPriceInternal
 async def booked(container: Container, seeded_event: dict):
     """An event whose bitmaps are warm, with a factory for orders that really
     hold their seats in both stores."""
-    cache = container.event_layout_cache()
+    cache = container.seat_layout_cache()
     event_id = seeded_event["event_id"]
     async with container.event_repository().load(event_id) as event:
-        layout = await event.event_layout()
-    await cache.init_event_layouts(layout)
+        layout = await event.seat_layout()
+    await cache.init_seat_layouts(layout)
 
     async def _book(*, overdue_by: timedelta | None = None) -> tuple[int, int]:
         now = now_utc()

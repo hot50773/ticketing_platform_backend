@@ -8,7 +8,7 @@
 
 欄位級別查詢回傳的是 Row tuple 而不是 ORM 物件，呼叫端因此得靠位置或字串
 取值，型別檢查幫不上忙，之後往投影裡加一欄就會默默改變所有呼叫端的解包
-形狀。這個 codebase 已經被這件事咬過一次：event_layout() 用
+形狀。這個 codebase 已經被這件事咬過一次：seat_layout() 用
 `select(EventZone)` 卻直接 `.all()`，拿到 Row 之後 `zone.id` 直接
 AttributeError。
 

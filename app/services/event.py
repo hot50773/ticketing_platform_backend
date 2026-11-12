@@ -9,14 +9,14 @@ Boundaries:
   - persistence goes through the aggregate, never a session
   - domain rules go through EventRuleValidator, which stays I/O free
   - ORM -> schema translation goes through EventSchemaMapper
-  - the zone / seat layout lives in EventLayoutService, not here
+  - the zone / seat layout lives in SeatLayoutService, not here
   - seat bitmaps: publish_event warms them, unpublish_event and delete_event
     drop them again
   - selling list cache: those three rebuild it in a background task after the
     response; a failed rebuild is repaired at the next soft expiry
   - detail cache: holds published events only, filled by the first read;
     edits to a published event rebuild it in the background, unpublish_event
-    and delete_event drop it; EventLayoutService rebuilds it the same way
+    and delete_event drop it; SeatLayoutService rebuilds it the same way
 
 event cache - 實作活動列表的快取，在大流量瘋狂搶票時，把讀取活動列表的流量擋下來，減輕資料庫負荷。
 TODO:
@@ -29,7 +29,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from app.cache.event_detail import EventDetailCache
-from app.cache.event_layout import EventLayoutCache
+from app.cache.seat_layout import SeatLayoutCache
 from app.cache.event_list import EventListCache
 from app.constants import MAX_CACHE_PAGES
 from app.enums import EventListMode, PageSize
@@ -59,7 +59,7 @@ class EventService:
         event_repository: EventRepository,
         event_list_cache: EventListCache,
         event_detail_cache: EventDetailCache,
-        seat_cache: EventLayoutCache,
+        seat_cache: SeatLayoutCache,
         event_rule_validator: EventRuleValidator,
         event_schema_mapper: EventSchemaMapper,
     ):
@@ -180,10 +180,10 @@ class EventService:
 
     async def publish_event(self, event_id: int, background_tasks: "BackgroundTasks") -> EventResponse:
         async with self._repository.load_for_update(event_id) as event_aggr:
-            event_layout = await event_aggr.event_layout()
-            self._validator.validate_publishable(event_layout.zones)
+            seat_layout = await event_aggr.seat_layout()
+            self._validator.validate_publishable(seat_layout.zones)
 
-            await self._seat_cache.init_event_layouts(event_layout)
+            await self._seat_cache.init_seat_layouts(seat_layout)
             await event_aggr.publish()
             response = self._mapper.to_event(event_aggr.event)
         # TODO: 改成 event driven

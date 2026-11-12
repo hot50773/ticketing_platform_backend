@@ -50,7 +50,7 @@ class UnknownSeatLockFailureError(Exception):
 
 
 class SeatUnexistError(BusinessRuleViolationError):
-    """Raised when ordering a seat that is not on the event's layout at all.
+    """Raised when ordering a seat that is not on the event's seat layout at all.
     Distinct from SeatOccupiedError: the seat was never there, so telling the
     customer it is taken would send them back to refresh and try again."""
     pass

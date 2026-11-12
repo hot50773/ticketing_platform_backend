@@ -1,4 +1,4 @@
-"""Event layout use cases: the zones of an event and the seats inside them.
+"""Seat layout use cases: the zones of an event and the seats inside them.
 
 Split from EventService because the spec treats them as separate concerns with
 separate preconditions - an event's own details stay editable after publishing,
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class EventLayoutService:
+class SeatLayoutService:
     """Orchestrates the zone and seat layout of an event."""
 
     def __init__(

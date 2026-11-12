@@ -4,7 +4,7 @@ Field names follow the ORM models.
 Schemas suffixed `Internal` never cross the API boundary: they are the
 transport objects between Repository and Service (no dict / tuple passing).
 
-An order carries its tickets inline: unlike an event layout, a single order is
+An order carries its tickets inline: unlike a seat layout, a single order is
 a handful of seats, not 10k, so there is no reason to page them separately.
 """
 from datetime import datetime

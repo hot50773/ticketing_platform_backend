@@ -15,7 +15,7 @@ from redis import RedisError
 
 
 from app.aggregates.order import OrderAggregate
-from app.cache.event_layout import EventLayoutCache
+from app.cache.seat_layout import SeatLayoutCache
 from app.exceptions import ORDER_NOT_DELETABLE_MSG, OrderNotDeletableError
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.order import OrderRepository
@@ -68,12 +68,12 @@ class OrderService:
         order_calculator: OrderCalculator,
         order_schema_mapper: OrderSchemaMapper,
         payment_gateway: PaymentGateway,
-        event_layout_cache: EventLayoutCache,
+        seat_layout_cache: SeatLayoutCache,
         order_expiration_scheduler: OrderExpirationQueue,
     ):
         self._repository = order_repository
         self._payment_gateway = payment_gateway
-        self._cache = event_layout_cache
+        self._cache = seat_layout_cache
         self._validator = order_validator
         self._calculator = order_calculator
         self._mapper = order_schema_mapper

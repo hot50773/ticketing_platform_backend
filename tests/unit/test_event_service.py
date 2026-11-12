@@ -23,14 +23,14 @@ from tests.unit._fakes import (
     FakeEventDetailCache,
     START,
     FakeBackgroundTasks,
-    FakeEventLayoutCache,
+    FakeSeatLayoutCache,
     FakeEventListCache,
     FakeEventRepository,
 )
 
 
 def a_service(
-    repository: FakeEventRepository, cache: FakeEventLayoutCache | None = None
+    repository: FakeEventRepository, cache: FakeSeatLayoutCache | None = None
 ) -> EventService:
     """The cache shares the repository's `calls` list, so a test can assert on
     where the Redis write lands among the database writes."""
@@ -38,7 +38,7 @@ def a_service(
         event_repository=repository,
         event_rule_validator=EventRuleValidator(),
         event_schema_mapper=EventSchemaMapper(),
-        seat_cache=cache or FakeEventLayoutCache(repository.calls),
+        seat_cache=cache or FakeSeatLayoutCache(repository.calls),
         event_list_cache=FakeEventListCache(repository.calls),
         event_detail_cache=FakeEventDetailCache(repository.calls),
     )
@@ -129,7 +129,7 @@ async def test_publish_checks_prices_not_orders():
     background = FakeBackgroundTasks()
     await a_service(repo).publish_event(1, background)
 
-    assert repo.calls == ["load_for_update", "event_layout", "init_event_layouts", "publish"]
+    assert repo.calls == ["load_for_update", "seat_layout", "init_seat_layouts", "publish"]
     await background.run()
     assert "refresh_all" in repo.calls
 
@@ -139,10 +139,10 @@ async def test_publish_warms_the_bitmap_before_it_writes():
     """The bitmap has to exist before is_active is committed, or the event goes
     live for a moment with no seats in Redis."""
     repo = FakeEventRepository()
-    cache = FakeEventLayoutCache(repo.calls)
+    cache = FakeSeatLayoutCache(repo.calls)
     await a_service(repo, cache).publish_event(1, FakeBackgroundTasks())
 
-    assert repo.calls.index("init_event_layouts") < repo.calls.index("publish")
+    assert repo.calls.index("init_seat_layouts") < repo.calls.index("publish")
     assert [seat.serial_number for seat in cache.warmed[0].zones[0].seats] == [0, 1]
 
 
@@ -151,7 +151,7 @@ async def test_publish_does_not_write_when_the_cache_fails():
     """A dead Redis must abort the publish: the transaction unwinds, so the
     event stays unpublished rather than going live without a bitmap."""
     repo = FakeEventRepository()
-    cache = FakeEventLayoutCache(repo.calls, fail=True)
+    cache = FakeSeatLayoutCache(repo.calls, fail=True)
 
     with pytest.raises(RedisError):
         await a_service(repo, cache).publish_event(1, FakeBackgroundTasks())
@@ -168,7 +168,7 @@ async def test_publish_does_not_warm_the_cache_for_an_unpriced_zone():
     with pytest.raises(TicketPriceNotReadyError):
         await a_service(repo).publish_event(1, FakeBackgroundTasks())
 
-    assert repo.calls == ["load_for_update", "event_layout"]
+    assert repo.calls == ["load_for_update", "seat_layout"]
 
 
 @pytest.mark.asyncio
@@ -191,7 +191,7 @@ async def test_unpublish_clears_the_bitmap_only_after_it_writes():
     """The mirror of publish: dropping a live event's bitmap would make every
     seat read as non-existent, so the delete waits until the event is off sale."""
     repo = FakeEventRepository(is_active=True)
-    cache = FakeEventLayoutCache(repo.calls)
+    cache = FakeSeatLayoutCache(repo.calls)
     await a_service(repo, cache).unpublish_event(1, FakeBackgroundTasks())
 
     assert repo.calls.index("unpublish") < repo.calls.index("clear_seat_layouts")
@@ -201,7 +201,7 @@ async def test_unpublish_clears_the_bitmap_only_after_it_writes():
 @pytest.mark.asyncio
 async def test_delete_clears_the_bitmap_only_after_it_writes():
     repo = FakeEventRepository()
-    cache = FakeEventLayoutCache(repo.calls)
+    cache = FakeSeatLayoutCache(repo.calls)
     await a_service(repo, cache).delete_event(1, FakeBackgroundTasks())
 
     assert repo.calls.index("soft_delete_cascade") < repo.calls.index("clear_seat_layouts")
@@ -211,7 +211,7 @@ async def test_delete_clears_the_bitmap_only_after_it_writes():
 @pytest.mark.asyncio
 async def test_blocked_unpublish_never_touches_the_cache():
     repo = FakeEventRepository(is_active=True, order_count=1)
-    cache = FakeEventLayoutCache(repo.calls)
+    cache = FakeSeatLayoutCache(repo.calls)
 
     with pytest.raises(ActiveOrdersExistError):
         await a_service(repo, cache).unpublish_event(1, FakeBackgroundTasks())

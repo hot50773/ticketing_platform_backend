@@ -1,4 +1,4 @@
-"""EventLayoutCache against a real Redis.
+"""SeatLayoutCache against a real Redis.
 
 The lock and the unlock each log the seats they touched. That pairing is the
 only forensic trail there is: if the process dies after a lock, the order was
@@ -8,7 +8,7 @@ import logging
 
 import pytest
 
-from app.cache.event_layout import EventLayoutCache
+from app.cache.seat_layout import SeatLayoutCache
 from app.containers import Container
 from app.exceptions import (
     SeatOccupiedError,
@@ -21,10 +21,10 @@ from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal, S
 @pytest.fixture
 async def warmed_event(container: Container, seeded_event: dict) -> dict:
     """An event whose existence bitmap is in Redis, so seats can be locked."""
-    cache = container.event_layout_cache()
+    cache = container.seat_layout_cache()
     async with container.event_repository().load(seeded_event["event_id"]) as event:
-        layout = await event.event_layout()
-    await cache.init_event_layouts(layout)
+        layout = await event.seat_layout()
+    await cache.init_seat_layouts(layout)
 
     return {
         "cache": cache,
@@ -45,7 +45,7 @@ async def warmed_event(container: Container, seeded_event: dict) -> dict:
 @pytest.mark.asyncio
 async def test_locking_names_the_seats_it_took(warmed_event, caplog):
     """The line that survives a kill -9 between the lock and the insert."""
-    with caplog.at_level(logging.INFO, logger="app.cache.event_layout"):
+    with caplog.at_level(logging.INFO, logger="app.cache.seat_layout"):
         await warmed_event["cache"].check_and_lock_seats_atomic(
             EventSeatsPricingInternal(
                 event_id=warmed_event["event_id"], seats=warmed_event["seats"]
@@ -66,7 +66,7 @@ async def test_unlocking_names_the_seats_it_freed(warmed_event, caplog):
         EventSeatsPricingInternal(event_id=event_id, seats=seats)
     )
 
-    with caplog.at_level(logging.INFO, logger="app.cache.event_layout"):
+    with caplog.at_level(logging.INFO, logger="app.cache.seat_layout"):
         await cache.release_seats(
             event_id=event_id,
             seats=[
@@ -139,6 +139,6 @@ def test_a_reason_nobody_handles_is_not_guessed_at():
     """The branch that keeps the next failure code from inheriting "already
     taken" by default."""
     with pytest.raises(UnknownSeatLockFailureError):
-        EventLayoutCache._raise_lock_failure(
+        SeatLayoutCache._raise_lock_failure(
             err_code="SEAT_SOMETHING_NEW", event_id=1, zone_id=2, seat_serial=3
         )
