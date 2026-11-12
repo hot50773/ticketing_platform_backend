@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     login_max_failures: int = 5
     login_failure_window_seconds: int = 900
 
-    enable_cron_jobs: bool = True
     db_echo: bool = False  # SQLAlchemy statement logging; noisy, keep off by default
 
 settings = Settings()

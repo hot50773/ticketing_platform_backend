@@ -12,7 +12,7 @@
 | 資料庫 | PostgreSQL 16（asyncpg 驅動） |
 | Migration | Alembic |
 | 快取 / 鎖位 | Redis（redis-stack-server）：座位 bitmap、Lua 腳本做原子鎖位與釋放 |
-| 背景工作 | taskiq + taskiq-redis（Redis Streams）處理付款期限到期；APScheduler 跑定時任務 |
+| 背景工作 | taskiq + taskiq-redis（Redis Streams）：付款期限到期的延遲任務，定時任務也由 taskiq scheduler 負責 |
 | 依賴注入 | dependency-injector |
 | 套件管理 | uv（以 `uv.lock` 為準） |
 | 測試 | pytest、pytest-asyncio、httpx |
@@ -102,7 +102,6 @@ uv run python -m app.scripts.create_admin --name Root --email root@example.com
 | `GOOGLE_CLIENT_ID` | Google Sign-In 的 OAuth client ID；空白代表不開放 Google 登入 | 空白 |
 | `LOGIN_MAX_FAILURES` | manager 登入同一組（IP、email）允許的失敗次數 | `5` |
 | `LOGIN_FAILURE_WINDOW_SECONDS` | 上面失敗次數的計算時間窗（秒） | `900` |
-| `ENABLE_CRON_JOBS` | 是否啟動 APScheduler 定時任務 | `true` |
 | `DB_ECHO` | 印出 SQL 語句 | `false` |
 
 ## 資料庫 Migration
@@ -157,7 +156,6 @@ app/
   scripts/           CLI 工具（create_admin）
   workers/           taskiq broker 與 worker 入口
   queue/delayed/     延遲任務（付款期限到期）
-  jobs/              APScheduler 定時任務
 migrations/          Alembic migration
 tests/unit/          單元測試（fake 取代外部依賴）
 tests/e2e/           走真實 Postgres / Redis 的測試

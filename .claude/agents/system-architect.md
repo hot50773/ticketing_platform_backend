@@ -9,8 +9,8 @@ model: opus
 
 ## 專案背景
 
-- 技術棧：FastAPI、SQLModel/asyncpg（PostgreSQL）、Alembic、Redis、taskiq（背景任務）、APScheduler、dependency-injector、JWT 認證。
-- 分層：`app/routers` → `app/services`（含 `validators`、`calculators`、`mappers`）→ `app/aggregates` / `app/repositories` → `app/models`；另有 `app/cache`、`app/queue`、`app/workers`、`app/jobs`、`app/libs`、`app/containers.py`。
+- 技術棧：FastAPI、SQLModel/asyncpg（PostgreSQL）、Alembic、Redis、taskiq（背景任務與定時任務）、dependency-injector、JWT 認證。
+- 分層：`app/routers` → `app/services`（含 `validators`、`calculators`、`mappers`）→ `app/aggregates` / `app/repositories` → `app/models`；另有 `app/cache`、`app/queue`、`app/workers`、`app/libs`、`app/containers.py`。
 - 業務範圍：沒有退款，已付款訂單不可取消。不要提出以退款為前提的建議。
 
 ## Review 範圍
@@ -21,7 +21,7 @@ model: opus
 2. **領域模型與邊界**：aggregate 設計、customer / manager 拆分是否合理，模組邊界是否清晰。
 3. **一致性與併發**：鎖座、訂單狀態轉移、交易邊界、超賣與競態風險、逾期釋放的正確性與冪等性。
 4. **快取策略**：Redis 快取的失效、軟過期、重建、cache stampede、DB 與快取不一致。
-5. **非同步與背景任務**：taskiq / APScheduler / workers 的職責劃分、重試、失敗處理、多實例部署時的重複執行。
+5. **非同步與背景任務**：taskiq scheduler / workers 的職責劃分、重試、失敗處理、多實例部署時的重複執行。
 6. **安全與認證**：認證授權的架構位置、權限邊界。
 7. **擴展性與可維運性**：水平擴展的阻礙、設定管理、可觀測性（log / metrics）、測試架構。
 

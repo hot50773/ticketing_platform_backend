@@ -15,7 +15,6 @@ from app.exceptions import (
     TooManyLoginAttemptsError,
 )
 from app.routers import auth, event, manager, order, venue
-from app.jobs.scheduler import start_scheduler
 from app.workers import broker, schedule_source
 
 logger = logging.getLogger(__name__)
@@ -38,18 +37,11 @@ async def lifespan(_app: FastAPI):
     db = container.db()
     redis_client = container.redis_client()
 
-    # Start background tasks
-    scheduler = start_scheduler(container)
-
     # The API only enqueues; `taskiq worker` / `taskiq scheduler` consume.
     await broker.startup()
     await schedule_source.startup()
 
     yield  # Runs the application
-
-    print("Cancelling background tasks...")
-    if scheduler:
-        scheduler.shutdown()
 
     print("Closing taskiq broker...")
     await schedule_source.shutdown()

@@ -1,4 +1,5 @@
 from taskiq import TaskiqScheduler
+from taskiq.schedule_sources import LabelScheduleSource
 from taskiq_redis import (
     ListRedisScheduleSource,
     RedisAsyncResultBackend,
@@ -17,5 +18,7 @@ broker = RedisStreamBroker(
 # them onto the stream. Minute resolution: a task fires up to ~1 min late.
 schedule_source = ListRedisScheduleSource(url=settings.redis_url)
 
-scheduler = TaskiqScheduler(broker=broker, sources=[schedule_source])
+# Periodic jobs belong here as `@broker.task(schedule=[{"cron": "..."}])`: there is
+# one scheduler process however many API instances run, so each fires once.
+scheduler = TaskiqScheduler(broker=broker, sources=[schedule_source, LabelScheduleSource(broker)])
 
