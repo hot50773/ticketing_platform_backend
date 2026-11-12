@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     login_max_failures: int = 5
     login_failure_window_seconds: int = 900
+    # Proxies whose X-Forwarded-For is trusted for the client IP (comma-separated, "*" for any)
+    forwarded_allow_ips: str = "127.0.0.1"
 
     db_echo: bool = False  # SQLAlchemy statement logging; noisy, keep off by default
 

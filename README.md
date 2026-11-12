@@ -102,6 +102,7 @@ uv run python -m app.scripts.create_admin --name Root --email root@example.com
 | `GOOGLE_CLIENT_ID` | Google Sign-In 的 OAuth client ID；空白代表不開放 Google 登入 | 空白 |
 | `LOGIN_MAX_FAILURES` | manager 登入同一組（IP、email）允許的失敗次數 | `5` |
 | `LOGIN_FAILURE_WINDOW_SECONDS` | 上面失敗次數的計算時間窗（秒） | `900` |
+| `FORWARDED_ALLOW_IPS` | 信任哪些 proxy 傳來的 `X-Forwarded-For`（逗號分隔，`*` 代表全部）；放在負載平衡器後面時要填它的 IP | `127.0.0.1` |
 | `DB_ECHO` | 印出 SQL 語句 | `false` |
 
 ## 資料庫 Migration

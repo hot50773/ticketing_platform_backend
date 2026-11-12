@@ -4,6 +4,8 @@ import logging
 import sys
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+from app.config import settings
 from app.containers import Container
 from app.exceptions import (
     AuthenticationError,
@@ -72,6 +74,11 @@ async def _audit_manager_writes(request: Request, call_next):
             manager.id, manager.role, request.method, request.url.path, response.status_code,
         )
     return response
+
+
+# Added last so it runs first: the login rate limit keys on request.client, which
+# behind a load balancer is otherwise the proxy shared by every client.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.forwarded_allow_ips)
 
 
 # 3. Map domain exceptions to HTTP status codes in one place

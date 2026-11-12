@@ -15,7 +15,6 @@ customer_bearer_scheme = HTTPBearer(scheme_name="Customer")
 manager_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/admin/auth/login", scheme_name="Manager")
 
 def client_ip(request: Request) -> str:
-    # TODO: behind a reverse proxy this is the proxy; read X-Forwarded-For from a trusted hop
     return request.client.host if request.client else "unknown"
 
 

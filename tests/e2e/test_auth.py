@@ -359,3 +359,25 @@ async def test_concurrent_first_google_sign_ins_share_one_customer(container: Co
 
     assert first.id == second.id
     assert (await repository.get_by_google_sub("g-1")).id == first.id
+
+
+async def test_the_rate_limit_keys_on_the_client_behind_a_trusted_proxy(
+    anonymous_client: AsyncClient, container: Container
+):
+    """The test client connects from 127.0.0.1, the default trusted proxy."""
+    await create_admin(
+        container, ManagerCreate(name="Root", email="root@example.com", password="admin-password")
+    )
+    attacker, owner = {"X-Forwarded-For": "203.0.113.1"}, {"X-Forwarded-For": "203.0.113.2"}
+
+    async def log_in(password: str, headers: dict[str, str]) -> int:
+        response = await anonymous_client.post(
+            f"{API}/{MANAGER_LOGIN}", data={"username": "root@example.com", "password": password}, headers=headers
+        )
+        return response.status_code
+
+    for _ in range(5):
+        assert await log_in("wrong-password", attacker) == 401
+
+    assert await log_in("admin-password", attacker) == 429
+    assert await log_in("admin-password", owner) == 200
