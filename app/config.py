@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,6 +34,8 @@ class Settings(BaseSettings):
     login_failure_window_seconds: int = 900
     # Proxies whose X-Forwarded-For is trusted for the client IP (comma-separated, "*" for any)
     forwarded_allow_ips: str = "127.0.0.1"
+    # "fake" always succeeds; the default refuses so no order is confirmed unpaid by accident
+    payment_gateway: Literal["unimplemented", "fake"] = "unimplemented"
 
     db_echo: bool = False  # SQLAlchemy statement logging; noisy, keep off by default
 

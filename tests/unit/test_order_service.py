@@ -22,7 +22,8 @@ from app.libs.clock.functional import now_utc
 from app.schemas.order import OrderCreate, OrderPay
 from app.services.calculators.order import DEFAULT_PAYMENT_WINDOW, OrderCalculator
 from app.services.mappers.order import OrderSchemaMapper
-from app.services.order import OrderService, UnimplementedPaymentGateway
+from app.libs.payment import UnimplementedPaymentGateway
+from app.services.order import OrderService
 from app.services.validators.order import OrderValidator
 from redis import RedisError
 

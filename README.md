@@ -103,6 +103,7 @@ uv run python -m app.scripts.create_admin --name Root --email root@example.com
 | `LOGIN_MAX_FAILURES` | manager 登入同一組（IP、email）允許的失敗次數 | `5` |
 | `LOGIN_FAILURE_WINDOW_SECONDS` | 上面失敗次數的計算時間窗（秒） | `900` |
 | `FORWARDED_ALLOW_IPS` | 信任哪些 proxy 傳來的 `X-Forwarded-For`（逗號分隔，`*` 代表全部）；放在負載平衡器後面時要填它的 IP | `127.0.0.1` |
+| `PAYMENT_GATEWAY` | 金流實作：`fake` 一律成功（僅限開發與測試），`unimplemented` 一律拒絕 | `unimplemented`（`.env.example` 為 `fake`） |
 | `DB_ECHO` | 印出 SQL 語句 | `false` |
 
 ## 資料庫 Migration
@@ -154,6 +155,7 @@ app/
   schemas/           API 與內部用的 Pydantic schema
   cache/             Redis 存取（座位 bitmap、活動快取、登入失敗計數）；lua/ 放原子操作腳本
   libs/security/     密碼雜湊、access token、Google ID token 驗證
+  libs/payment.py    金流介面（PaymentGateway）與開發用的假金流
   scripts/           CLI 工具（create_admin）
   workers/           taskiq broker 與 worker 入口
   queue/delayed/     延遲任務（付款期限到期）

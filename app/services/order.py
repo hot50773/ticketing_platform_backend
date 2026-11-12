@@ -9,7 +9,6 @@ Boundaries:
     whether a charge is a network call, a mock, or a queue
 """
 import logging
-from typing import Protocol
 
 from redis import RedisError
 
@@ -17,6 +16,7 @@ from redis import RedisError
 from app.aggregates.order import OrderAggregate
 from app.cache.seat_layout import SeatLayoutCache
 from app.exceptions import ORDER_NOT_DELETABLE_MSG, OrderNotDeletableError
+from app.libs.payment import PaymentGateway
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.order import OrderRepository
 from app.schemas.event import EventSeatsPricingInternal, SeatPositionInternal
@@ -43,19 +43,6 @@ SEATS_STILL_LOCKED_MSG = (
     "order exists for these seats, so nobody can buy them until the cleanup "
     "job frees them."
 )
-
-
-class PaymentGateway(Protocol):
-    async def charge(self, order_id: int, amount: int, payload: OrderPay) -> str:
-        """Returns the provider's transaction id; raises on a failed charge."""
-        ...
-
-class UnimplementedPaymentGateway:
-    async def charge(self, order_id: int, amount: int, payload: OrderPay) -> str:
-        raise NotImplementedError(
-            "No payment provider is wired in. Bind a real PaymentGateway in "
-            "app/containers.py before enabling POST /orders/{order_id}/pay."
-        )
 
 
 class OrderService:
@@ -199,9 +186,8 @@ class OrderService:
             await order_aggr.mark_as_paying(payload)
 
         try:
-            transaction_id = await self._payment_gateway.charge(order_id, amount, payload)
+            transaction_id = await self._payment_gateway.charge(order_id, amount, payload.payment_method)
         except Exception:
-            # TODO: timeout 不代表扣款失敗，直接標 FAILED 會讓客人能再付一次而被重複扣款
             logger.exception("Charge failed for order %s; releasing the claim", order_id)
             async with self._repository.load_for_update(order_id) as order_aggr:
                 await order_aggr.mark_as_payment_fail()

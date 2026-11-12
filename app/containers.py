@@ -10,6 +10,7 @@ from app.cache.login_attempts import LoginAttemptLimiter
 from app.config import settings
 from app.db.postgres import Database
 from app.db.redis import RedisClient
+from app.libs.payment import PAYMENT_GATEWAYS
 from app.libs.security import AccessTokenCodec, GoogleIdTokenVerifier, PasswordHasher
 from app.queue.delayed.process_expired_order import OrderExpirationQueue
 from app.repositories.event import EventRepository
@@ -23,7 +24,7 @@ from app.services.event import EventService
 from app.services.seat_layout import SeatLayoutService
 from app.services.mappers.customer import CustomerSchemaMapper
 from app.services.mappers.manager import ManagerSchemaMapper
-from app.services.order import OrderService, UnimplementedPaymentGateway
+from app.services.order import OrderService
 from app.services.mappers import EventSchemaMapper
 from app.services.mappers.order import OrderSchemaMapper
 from app.services.customer import CustomerService
@@ -168,10 +169,7 @@ class Container(containers.DeclarativeContainer):
         event_detail_cache=event_detail_cache,
     )
 
-    # The payment provider is a placeholder that raises: binding a fake success
-    # here would let an order reach CONFIRMED with no money behind it. Swap in
-    # the real gateway when POST /orders/{order_id}/pay goes live.
-    payment_gateway = providers.Factory(UnimplementedPaymentGateway)
+    payment_gateway = providers.Factory(PAYMENT_GATEWAYS[settings.payment_gateway])
 
     order_expiration_queue = providers.Factory(OrderExpirationQueue)
 
