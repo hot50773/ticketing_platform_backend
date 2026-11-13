@@ -15,9 +15,8 @@ from app.schemas.order import (
     OrderTicketPricingInternal,
 )
 
-# The cart hold from the spec; the expiry job releases the order once it passes.
-DEFAULT_PAYMENT_WINDOW = timedelta(seconds=10)
-# DEFAULT_PAYMENT_WINDOW = timedelta(minutes=10)
+# Seats stay held until the deadline; the expiry job releases the order once it passes.
+DEFAULT_PAYMENT_WINDOW = timedelta(minutes=10)
 
 
 class OrderCalculator:
