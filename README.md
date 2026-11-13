@@ -1,21 +1,34 @@
-# 售票系統 - 暫時鎖票
-演唱會線上售票的後端 API：場地與座位管理、活動上下架、下單時暫時鎖住座位，
-付款期限一過就把座位釋放回票池。
+# 大型場地的售票系統 Backend
+
+## 專案簡介
+這是一個針對大型活動的售票系統，支援萬人場地的演唱會售票。
+## 功能
+後台
+- 管理員可建立場地與座位表
+- 管理員可以建立演唱會等活動
+
+前台（售票網站）
+- 顧客可瀏覽公開售票的演唱會等活動
+- 顧客可以一次預訂同一活動的多個座位
+
+## 非功能性需求
+- 資料正確性 → 門票超賣問題
+- 高併發下的可用性 → 瞬間大流量搶票情境
 
 ## 技術 Stack
 
-| 類別 | 使用 |
-| --- | --- |
-| 語言 | Python 3.14 |
-| Web 框架 | FastAPI + Uvicorn |
-| ORM / Schema | SQLModel（SQLAlchemy 2, async）、Pydantic v2、pydantic-settings |
-| 資料庫 | PostgreSQL 16（asyncpg 驅動） |
-| Migration | Alembic |
-| 快取 / 鎖位 | Redis（redis-stack-server）：座位 bitmap、Lua 腳本做原子鎖位與釋放 |
-| 背景工作 | taskiq + taskiq-redis（Redis Streams）：付款期限到期的延遲任務，定時任務也由 taskiq scheduler 負責 |
-| 依賴注入 | dependency-injector |
-| 套件管理 | uv（以 `uv.lock` 為準） |
-| 測試 | pytest、pytest-asyncio、httpx |
+| 類別           | 使用                                                                          |
+|--------------|-----------------------------------------------------------------------------|
+| 語言           | Python 3.14                                                                 |
+| Web 框架       | FastAPI + Uvicorn                                                           |
+| ORM / Schema | SQLModel（SQLAlchemy async）、Pydantic                                          |
+| 資料庫          | PostgreSQL 16（asyncpg 驅動）                                                   |
+| Migration    | Alembic                                                                     |
+| 快取 / 鎖位      | Redis（redis-stack-server）：座位 bitmap、Lua 腳本做原子鎖位與釋放                          |
+| 背景工作 (MQ)    | taskiq + taskiq-redis（Redis Streams）：付款期限到期的延遲任務，定時任務也由 taskiq scheduler 負責 |
+| 依賴注入         | dependency-injector                                                         |
+| 套件管理         | uv（以 `uv.lock` 為準）                                                          |
+| 測試           | pytest、pytest-asyncio、httpx                                                 |
 
 ## 前置需求
 
@@ -42,8 +55,10 @@ uv run alembic upgrade head
 uv run uvicorn main:app --reload
 ```
 
+## API
 啟動後開 <http://localhost:8000/docs> 看 Swagger 文件。API 都掛在 `/api/v1` 底下，分成前台與後台：
 
+[//]: # (TODO: 這格表格太冗長，且 Swagger 就能看到，要簡化或直接刪除)
 | 前台 | 用途 |
 | --- | --- |
 | `/auth` | customer 以 Google 登入（`/auth/google`）、查看自己（`/auth/me`） |
@@ -59,7 +74,7 @@ uv run uvicorn main:app --reload
 | `/admin/venues`、`/admin/zones` | 建立場地、區域、座位；刪除場地 |
 | `/admin/orders` | 刪除逾期未付款的訂單 |
 
-customer 只能用 Google 登入；manager 用 email 與密碼登入，連續失敗太多次會被暫時擋下（429）。
+customer 只能用 Google 登入；manager 用 email 與密碼登入。
 
 ### 背景 worker
 
@@ -89,22 +104,7 @@ uv run python -m app.scripts.create_admin --name Root --email root@example.com
 
 ## 環境變數
 
-設定由 `app/config.py` 讀取，預設讀 `.env`；設 `ENV_FILE` 可以換成別的檔案。
-
-| 變數 | 說明 | 開發預設值 |
-| --- | --- | --- |
-| `DATABASE_URL` | Postgres 連線字串 | `postgresql+asyncpg://postgres:postgres_password@localhost:15432/ticketing_platform_noai` |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_PORT` | 給 docker compose 建立資料庫用 | 見 `.env.example` |
-| `REDIS_URL` | Redis 連線字串 | `redis://localhost:16379/0` |
-| `REDIS_HOST` / `REDIS_PORT` | 給 docker compose 對外開 port 用 | `localhost` / `16379` |
-| `JWT_SECRET_KEY` | 簽 access token 的金鑰，**必填**，至少 32 個字元 | 無，用 `python -c "import secrets; print(secrets.token_urlsafe(48))"` 產生 |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | access token 有效分鐘數 | `60` |
-| `GOOGLE_CLIENT_ID` | Google Sign-In 的 OAuth client ID；空白代表不開放 Google 登入 | 空白 |
-| `LOGIN_MAX_FAILURES` | manager 登入同一組（IP、email）允許的失敗次數 | `5` |
-| `LOGIN_FAILURE_WINDOW_SECONDS` | 上面失敗次數的計算時間窗（秒） | `900` |
-| `FORWARDED_ALLOW_IPS` | 信任哪些 proxy 傳來的 `X-Forwarded-For`（逗號分隔，`*` 代表全部）；放在負載平衡器後面時要填它的 IP | `127.0.0.1` |
-| `PAYMENT_GATEWAY` | 金流實作：`fake` 一律成功（僅限開發與測試），`unimplemented` 一律拒絕 | `unimplemented`（`.env.example` 為 `fake`） |
-| `DB_ECHO` | 印出 SQL 語句 | `false` |
+設定由 `app/config.py` 讀取，預設讀 `.env`
 
 ## 資料庫 Migration
 
@@ -144,7 +144,7 @@ uv run pytest tests/e2e
 ```
 main.py              Uvicorn 入口（re-export app.main:app）
 app/
-  main.py            FastAPI app、lifespan、例外對應 HTTP 狀態碼
+  main.py            FastAPI app
   config.py          環境變數設定
   containers.py      依賴注入容器
   routers/           HTTP 路由（auth / manager / venue / event / order），各分前台與後台
@@ -153,7 +153,7 @@ app/
   repositories/      Postgres 存取
   models/            SQLModel 資料表
   schemas/           API 與內部用的 Pydantic schema
-  cache/             Redis 存取（座位 bitmap、活動快取、登入失敗計數）；lua/ 放原子操作腳本
+  cache/             Redis 存取；lua/ 放原子操作腳本
   libs/security/     密碼雜湊、access token、Google ID token 驗證
   libs/payment.py    金流介面（PaymentGateway）與開發用的假金流
   scripts/           CLI 工具（create_admin）
@@ -165,16 +165,8 @@ tests/e2e/           走真實 Postgres / Redis 的測試
 ```
 
 ## 文件
-
-- [`活動CRUD規格.md`](活動CRUD規格.md) — 活動 CRUD 的行為規格與歷次更正紀錄。
 - [`CLAUDE.md`](CLAUDE.md) — 註解規則與 router 命名慣例。
 
-## 設計筆記
-
-### 背景：各平台的暫時鎖票
-各大台灣售票系統的「暫時鎖票」保留時間各有不同。此機制的目的是在您選好座位後，提供有限的時間填寫購票資料並完成結帳。
-
-常見平台的鎖票時間與清票規則如下：
-- KKTIX：約 15 分鐘。若選好座位按下一步進入填單畫面，系統會保留 15 分鐘；若逾時未付款，票券會自動釋放回票池。
-- 拓元 (tixCraft)：刷卡結帳通常約 10 到 15 分鐘。若訂單逾期未付款或刷卡失敗，系統常會在開賣後的 10 至 15 分鐘 或後續特定時間釋出退票。
-- 寬宏售票 / ibon 售票：依照不同活動設定，通常刷卡或虛擬帳號繳費約有 10 到 15 分鐘 的暫時保留期。
+## 下一階段
+- 高併發情境下的限流機制
+- 活動搜尋功能
